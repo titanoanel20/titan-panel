@@ -195,6 +195,95 @@ def generate_xray_config() -> dict:
             "tag": "in-ss",
         })
 
+    # ---------------- raw TCP inbounds (plain / TLS / Reality) ----------------
+    tcp_users = [u for u in users if u.get("transport") == "tcp"]
+    vless_tcp_plain = [mk_client(u) for u in tcp_users
+                       if u["protocol"] == "vless" and (u.get("security") or "none") == "none"]
+    vless_tcp_tls = [mk_client(u) for u in tcp_users
+                     if u["protocol"] == "vless" and (u.get("security") or "") == "tls"]
+    vless_tcp_reality = [mk_client(u) for u in tcp_users
+                         if u["protocol"] == "vless" and (u.get("security") or "") == "reality"]
+    vmess_tcp_plain = [mk_client(u) for u in tcp_users
+                       if u["protocol"] == "vmess" and (u.get("security") or "none") == "none"]
+    vmess_tcp_tls = [mk_client(u) for u in tcp_users
+                     if u["protocol"] == "vmess" and (u.get("security") or "") == "tls"]
+    trojan_tcp = [{"password": u["uuid"], "email": u["uid"]} for u in tcp_users
+                  if u["protocol"] == "trojan"]
+
+    if vless_tcp_plain:
+        inbounds.append({
+            "listen": "0.0.0.0", "port": config.XRAY_TCP_VLESS_PORT, "protocol": "vless",
+            "settings": {"clients": vless_tcp_plain, "decryption": "none"},
+            "streamSettings": {"network": "tcp", "security": "none"},
+            "tag": "in-vless-tcp",
+        })
+    if vmess_tcp_plain:
+        inbounds.append({
+            "listen": "0.0.0.0", "port": config.XRAY_TCP_VMESS_PORT, "protocol": "vmess",
+            "settings": {"clients": vmess_tcp_plain},
+            "streamSettings": {"network": "tcp", "security": "none"},
+            "tag": "in-vmess-tcp",
+        })
+
+    # TLS over raw TCP — needs a certificate Xray can present.
+    tls_ok = (
+        config.TLS_CERT_FILE and config.TLS_KEY_FILE
+        and os.path.exists(config.TLS_CERT_FILE) and os.path.exists(config.TLS_KEY_FILE)
+    )
+    if (vless_tcp_tls or vmess_tcp_tls or trojan_tcp) and not tls_ok:
+        log.warning("TCP-TLS users exist but no certificate is configured "
+                    "(TITAN_TLS_CERT / TITAN_TLS_KEY) — TLS inbounds skipped")
+    if tls_ok:
+        tls_settings = {
+            "certificates": [{
+                "certificateFile": config.TLS_CERT_FILE,
+                "keyFile": config.TLS_KEY_FILE,
+            }],
+            "alpn": ["h2", "http/1.1"],
+        }
+        if vless_tcp_tls:
+            inbounds.append({
+                "listen": "0.0.0.0", "port": config.XRAY_TCP_VLESS_TLS_PORT, "protocol": "vless",
+                "settings": {"clients": vless_tcp_tls, "decryption": "none"},
+                "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": tls_settings},
+                "tag": "in-vless-tcp-tls",
+            })
+        if vmess_tcp_tls:
+            inbounds.append({
+                "listen": "0.0.0.0", "port": config.XRAY_TCP_VMESS_TLS_PORT, "protocol": "vmess",
+                "settings": {"clients": vmess_tcp_tls},
+                "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": tls_settings},
+                "tag": "in-vmess-tcp-tls",
+            })
+        if trojan_tcp:
+            inbounds.append({
+                "listen": "0.0.0.0", "port": config.XRAY_TCP_TROJAN_PORT, "protocol": "trojan",
+                "settings": {"clients": trojan_tcp},
+                "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": tls_settings},
+                "tag": "in-trojan-tcp",
+            })
+
+    if vless_tcp_reality:
+        priv = db.get_meta("reality_priv")
+        sid = db.get_meta("reality_sid") or ""
+        if priv:
+            inbounds.append({
+                "listen": "0.0.0.0", "port": config.XRAY_TCP_VLESS_REALITY_PORT, "protocol": "vless",
+                "settings": {"clients": vless_tcp_reality, "decryption": "none"},
+                "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {
+                    "show": False,
+                    "dest": config.REALITY_DEST,
+                    "xver": 0,
+                    "serverNames": [config.REALITY_SNI],
+                    "privateKey": priv,
+                    "shortIds": [sid],
+                }},
+                "tag": "in-vless-reality",
+            })
+        else:
+            log.warning("Reality users exist but no private key is available — "
+                        "Reality inbound skipped")
+
     return {
         "log": {"loglevel": "warning"},
         "dns": {

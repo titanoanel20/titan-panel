@@ -22,6 +22,24 @@ XRAY_GRPC_PORT = int(os.environ.get("XRAY_GRPC_PORT", "10005"))
 XRAY_SS_PORT = int(os.environ.get("XRAY_SS_PORT", "10006"))
 XRAY_API_PORT = int(os.environ.get("XRAY_API_PORT", "10085"))
 
+# ------------------------------------------------------------------ raw TCP
+# Raw-TCP inbounds bind on the public interface (they own the socket — no TLS
+# termination at the edge). Each protocol × security combo gets its own port.
+XRAY_TCP_VLESS_PORT = int(os.environ.get("XRAY_TCP_VLESS_PORT", "10007"))            # none
+XRAY_TCP_VLESS_TLS_PORT = int(os.environ.get("XRAY_TCP_VLESS_TLS_PORT", "10008"))    # tls
+XRAY_TCP_VLESS_REALITY_PORT = int(os.environ.get("XRAY_TCP_VLESS_REALITY_PORT", "10009"))  # reality
+XRAY_TCP_VMESS_PORT = int(os.environ.get("XRAY_TCP_VMESS_PORT", "10010"))            # none
+XRAY_TCP_VMESS_TLS_PORT = int(os.environ.get("XRAY_TCP_VMESS_TLS_PORT", "10011"))    # tls
+XRAY_TCP_TROJAN_PORT = int(os.environ.get("XRAY_TCP_TROJAN_PORT", "10012"))          # tls
+
+# Xray terminates TLS itself for the TCP-TLS inbounds; point these at a cert.
+TLS_CERT_FILE = os.environ.get("TITAN_TLS_CERT", "")
+TLS_KEY_FILE = os.environ.get("TITAN_TLS_KEY", "")
+
+# Reality (VLESS) — destination to masquerade as + SNI to present.
+REALITY_DEST = os.environ.get("TITAN_REALITY_DEST", "1.1.1.1:443")
+REALITY_SNI = os.environ.get("TITAN_REALITY_SNI", "www.microsoft.com")
+
 # Xray binary location + feature flag (dev mode runs the panel without Xray).
 XRAY_BIN = os.environ.get("XRAY_BIN", "/usr/local/bin/xray")
 
@@ -73,6 +91,11 @@ DEFAULT_SETTINGS = {
     "notify_new_conn": False,
     "backup_enabled": True,
     "backup_interval_hours": 24,
+    # reality (VLESS) — public values, filled when the keypair is generated
+    "reality_pub": "",
+    "reality_sid": "",
+    "reality_sni": "",
+    "reality_dest": "",
 }
 
 # Which Xray outbound tags are counted as "blocked" domains (for the routing
@@ -81,5 +104,5 @@ BLOCKED_TAGS = {"block-ads", "block-iran", "block-adult", "block-custom"}
 
 VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
 VALID_ALPNS = {"http/1.1", "h2,http/1.1", "h3,h2,http/1.1", ""}
-VALID_TRANSPORTS = {"ws", "xhttp", "grpc"}
+VALID_TRANSPORTS = {"ws", "xhttp", "grpc", "tcp"}
 VALID_SECURITY = {"none", "tls", "reality"}

@@ -9,7 +9,7 @@
 
   // ---------------- shared bits ----------------
   const PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks'];
-  const TRANSPORTS = ['ws', 'xhttp', 'grpc'];
+  const TRANSPORTS = ['ws', 'xhttp', 'grpc', 'tcp'];
   const FINGERPRINTS = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized'];
   const ALPNS = ['http/1.1', 'h2,http/1.1', 'h3,h2,http/1.1', ''];
 
@@ -215,6 +215,7 @@
           <select class="select" name="security">
             <option value="tls" ${(u?.security || 'tls') === 'tls' ? 'selected' : ''}>TLS</option>
             <option value="none" ${u?.security === 'none' ? 'selected' : ''}>None</option>
+            <option value="reality" ${u?.security === 'reality' ? 'selected' : ''}>Reality</option>
           </select></label>
         <label class="field"><span class="field-label" data-i18n="fingerprint"></span>
           <select class="select" name="fingerprint">${sel('fingerprint', FINGERPRINTS, u?.fingerprint || s.default_fingerprint || 'chrome')}</select></label>
@@ -731,7 +732,7 @@
           <div class="wiz-section"><h4><span class="step">4</span>${I18N.t('wizard_security')}</h4>
             <div class="grid-form">
               <label class="field"><span class="field-label" data-i18n="security"></span>
-                <select class="select" name="security"><option value="tls" ${(u?.security || 'tls') === 'tls' ? 'selected' : ''}>TLS</option><option value="none" ${u?.security === 'none' ? 'selected' : ''}>None</option></select></label>
+                <select class="select" name="security"><option value="tls" ${(u?.security || 'tls') === 'tls' ? 'selected' : ''}>TLS</option><option value="none" ${u?.security === 'none' ? 'selected' : ''}>None</option><option value="reality" ${u?.security === 'reality' ? 'selected' : ''}>Reality</option></select></label>
               <label class="field"><span class="field-label" data-i18n="fingerprint"></span>
                 <select class="select" name="fingerprint">${FINGERPRINTS.map(fp => `<option value="${fp}" ${(u?.fingerprint || settings.default_fingerprint || 'chrome') === fp ? 'selected' : ''}>${fp}</option>`).join('')}</select></label>
               <label class="field"><span class="field-label" data-i18n="alpn"></span>

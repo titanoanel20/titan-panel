@@ -18,9 +18,9 @@ SS_METHODS = [
 
 # transports the panel can actually serve, per protocol
 SERVED_TRANSPORTS = {
-    "vless": {"ws", "xhttp", "grpc"},
-    "vmess": {"ws", "xhttp", "grpc"},
-    "trojan": {"ws"},
+    "vless": {"ws", "xhttp", "grpc", "tcp"},
+    "vmess": {"ws", "xhttp", "grpc", "tcp"},
+    "trojan": {"ws", "tcp"},
     "shadowsocks": set(),
 }
 
@@ -80,12 +80,15 @@ def build_vless_link(host: str, port: int, user: dict, settings: dict) -> str:
     name = quote('TiTaN-' + user['name'] + '-VLESS-' + transport.upper())
 
     if security == "reality":
-        pk = quote(user.get("public_key", ""), safe="")
-        sid = quote(user.get("short_id", ""), safe="")
-        sx = quote(user.get("spider_x", "") or sni, safe="")
+        # Reality is only served over raw TCP; public key/short id come from
+        # the panel's generated keypair (settings), with per-user overrides.
+        pk = quote(user.get("public_key") or settings.get("reality_pub", ""), safe="")
+        sid = quote(user.get("short_id") or settings.get("reality_sid", ""), safe="")
+        rsni = settings.get("reality_sni") or sni
+        sx = quote(user.get("spider_x", "") or rsni, safe="")
         return (
             f"vless://{uuid}@{host}:{port}?encryption=none&security=reality&"
-            f"pbk={pk}&sid={sid}&sni={sni}&spx={sx}&fp={fp}&type=tcp&"
+            f"pbk={pk}&sid={sid}&sni={quote(rsni, safe='')}&spx={sx}&fp={fp}&type=tcp&"
             f"headerType=none&flow=xtls-rprx-vision#{name}"
         )
 
@@ -95,6 +98,14 @@ def build_vless_link(host: str, port: int, user: dict, settings: dict) -> str:
     if transport in ("ws", "xhttp"):
         params = _host_params(host, _path_for("vless", transport), sni, fp, alpn, transport, settings)
         return f"vless://{uuid}@{host}:{port}?encryption=none&security={sec}&{params}#{name}"
+    if transport == "tcp":
+        # raw TCP: TLS terminated by Xray (or plain). sni/fp/alpn still apply.
+        if security == "tls":
+            params = f"type=tcp&headerType=none&sni={quote(sni, safe='')}&fp={fp}"
+            if alpn:
+                params += f"&alpn={quote(alpn, safe=',/')}"
+            return f"vless://{uuid}@{host}:{port}?encryption=none&security=tls&{params}#{name}"
+        return f"vless://{uuid}@{host}:{port}?encryption=none&security=none&type=tcp&headerType=none#{name}"
     # plain tcp fallback (no such inbound is generated unless explicitly added)
     return f"vless://{uuid}@{host}:{port}?encryption=none&security=none&type=tcp&headerType=none#{name}"
 
@@ -135,17 +146,22 @@ def build_vmess_link(host: str, port: int, user: dict, settings: dict) -> str:
 
 def build_trojan_link(host: str, port: int, user: dict, settings: dict) -> str:
     password = user["uuid"]
-    # the server only runs a Trojan-over-WebSocket inbound, so always advertise ws
-    transport = "ws"
+    transport = _transport_for(user, settings)
     sni = settings.get("sni_override") or host
     alpn = user.get("alpn", settings.get("default_alpn", "http/1.1"))
     fp = user.get("fingerprint") or settings.get("default_fingerprint", "chrome")
+    name = quote("TiTaN-" + user["name"] + "-Trojan-" + transport.upper())
 
+    if transport == "tcp":
+        # classic Trojan over raw TCP (TLS terminated by Xray)
+        return (
+            f"trojan://{quote(password, safe='')}@{host}:{port}?"
+            f"security=tls&sni={quote(sni, safe='')}&alpn={quote(alpn, safe=',/')}&fp={fp}#{name}"
+        )
     return (
         f"trojan://{quote(password, safe='')}@{host}:{port}?"
         f"security=tls&type=ws&host={quote(host, safe='')}&path={quote('/tr-ws', safe='/')}"
-        f"&sni={quote(sni, safe='')}&alpn={quote(alpn, safe=',/')}&fp={fp}#"
-        f"{quote('TiTaN-' + user['name'] + '-Trojan-WS')}"
+        f"&sni={quote(sni, safe='')}&alpn={quote(alpn, safe=',/')}&fp={fp}#{name}"
     )
 
 

@@ -36,6 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import APP_NAME, APP_VERSION, config, db, security, state, xray
 from . import nodes as nodesync
+from . import reality
 from . import tasks as bg
 from .colo_map import describe_colo
 from .geo import detect_location, flag_from_code
@@ -53,6 +54,12 @@ doh_client = httpx.AsyncClient(timeout=6.0, follow_redirects=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(config.DATA_DIR, exist_ok=True)
+    if not config.IS_NODE:
+        # generate the Reality keypair once (no-op without the Xray binary)
+        try:
+            reality.ensure_reality_keys()
+        except Exception:  # noqa: BLE001
+            pass
     try:
         xray.write_xray_config()
         xray.restart_xray()
@@ -103,6 +110,23 @@ def _link_port(settings: dict) -> int:
     return port if 1 <= port <= 65535 else 443
 
 
+def _tcp_port(protocol: str, security: str) -> int:
+    """Public port a raw-TCP user should dial, per protocol × security."""
+    p = (protocol or "vless").lower()
+    s = (security or "none").lower()
+    if p == "vless":
+        return {
+            "none": config.XRAY_TCP_VLESS_PORT,
+            "tls": config.XRAY_TCP_VLESS_TLS_PORT,
+            "reality": config.XRAY_TCP_VLESS_REALITY_PORT,
+        }.get(s, config.XRAY_TCP_VLESS_PORT)
+    if p == "vmess":
+        return config.XRAY_TCP_VMESS_TLS_PORT if s == "tls" else config.XRAY_TCP_VMESS_PORT
+    if p == "trojan":
+        return config.XRAY_TCP_TROJAN_PORT
+    return config.XRAY_TCP_VLESS_PORT
+
+
 def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
     """The (host, port) a user's connection link should point at.
 
@@ -110,24 +134,31 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
       the node's own public host.
     - On the main panel, a user assigned to a remote node gets a link pointing
       at that node's address; otherwise it points at the main panel.
+    - Raw-TCP users get the dedicated TCP port for their protocol/security.
     """
     settings = db.get_settings()
+    host = None
+    port = _link_port(settings)
     if config.IS_NODE:
-        return _public_host(request), _link_port(settings)
-    node = db.get_node(int(u.get("node_id") or 1)) if u.get("node_id") else None
-    if node and not node.get("is_local") and (node.get("address") or "").strip():
-        host = node["address"].strip()
-        host = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", host)
-        host = host.split("/", 1)[0].rsplit("@", 1)[-1].strip()
+        host = _public_host(request)
+    else:
+        node = db.get_node(int(u.get("node_id") or 1)) if u.get("node_id") else None
+        if node and not node.get("is_local") and (node.get("address") or "").strip():
+            raw = node["address"].strip()
+            raw = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", raw)
+            raw = raw.split("/", 1)[0].rsplit("@", 1)[-1].strip()
+            port = _link_port(settings)
+            if ":" in raw:
+                name, p = raw.rsplit(":", 1)
+                if p.isdigit():
+                    raw, port = name, int(p)
+            host = raw.strip("[]") or None
+    if host is None:
+        host = _public_host(request)
         port = _link_port(settings)
-        if ":" in host:
-            name, p = host.rsplit(":", 1)
-            if p.isdigit():
-                host, port = name, int(p)
-        host = host.strip("[]")
-        if host:
-            return host, port
-    return _public_host(request), _link_port(settings)
+    if (u.get("transport") or "ws").lower() == "tcp":
+        port = _tcp_port(u.get("protocol", "vless"), u.get("security", "none"))
+    return host, port
 
 
 def _set_session(response: Response, username: str, remember: bool = False):
@@ -806,9 +837,9 @@ def _expire_from_days(days) -> float | None:
 
 
 _SERVED_TRANSPORTS = {
-    "vless": {"ws", "xhttp", "grpc"},
-    "vmess": {"ws", "xhttp", "grpc"},
-    "trojan": {"ws"},
+    "vless": {"ws", "xhttp", "grpc", "tcp"},
+    "vmess": {"ws", "xhttp", "grpc", "tcp"},
+    "trojan": {"ws", "tcp"},
     "shadowsocks": set(),
 }
 
@@ -821,6 +852,15 @@ def _normalize_protocol_fields(protocol: str, transport, security) -> tuple[str,
     if t not in allowed:
         t = "ws" if "ws" in allowed else next(iter(allowed), "ws")
     if s not in ("tls", "none", "reality"):
+        s = "tls"
+    if protocol == "trojan":
+        # Trojan requires TLS regardless of transport
+        s = "tls"
+    elif protocol == "vmess" and s == "reality":
+        # VMess has no Reality support
+        s = "tls"
+    if s == "reality" and t != "tcp":
+        # Reality is only served over raw TCP
         s = "tls"
     return t, s
 
@@ -996,6 +1036,8 @@ async def api_node_sync(request: Request):
     payload = await request.json()
     if not nodesync.secret_ok(payload.get("secret")):
         raise HTTPException(401, "bad-secret")
+    if payload.get("reality"):
+        reality.apply_reality_config(payload["reality"])
     users = payload.get("users") or []
     seen: set[str] = set()
     for data in users:

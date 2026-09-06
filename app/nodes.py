@@ -60,6 +60,18 @@ def _payload_hash(users: list[dict]) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()
 
 
+def _reality_payload() -> dict | None:
+    """Reality keypair to hand to nodes so their Reality inbound matches links."""
+    priv = db.get_meta("reality_priv")
+    if not priv:
+        return None
+    return {
+        "priv": priv,
+        "pub": db.get_meta("reality_pub") or "",
+        "sid": db.get_meta("reality_sid") or "",
+    }
+
+
 async def sync_node(node: dict, users: list[dict], timeout: float = 8.0) -> bool:
     """Push a node's full user list to it. Returns True on success."""
     url = _node_url(node)
@@ -68,6 +80,7 @@ async def sync_node(node: dict, users: list[dict], timeout: float = 8.0) -> bool
     payload = {
         "secret": config.NODE_SECRET,
         "users": [user_sync_payload(u) for u in users],
+        "reality": _reality_payload(),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as cl:
