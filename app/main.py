@@ -20,8 +20,10 @@ from urllib.parse import quote
 import httpx
 import psutil
 import qrcode
+from PIL import Image as PILImage
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
@@ -370,10 +372,12 @@ async def api_logout():
 @app.get("/api/me")
 async def api_me(request: Request):
     user = _current_username(request)
+    settings = db.get_settings()
     return {
         "logged_in": bool(user),
         "username": user,
-        "settings": db.get_settings(),
+        "settings": settings,
+        "avatar": _avatar_info(settings),
         "app_version": APP_VERSION,
         "default_auth": db.get_meta("auth_is_default") == "1",
     }
@@ -431,65 +435,64 @@ async def api_set_settings(request: Request, _: str = Depends(_require_auth)):
     return {"ok": True, "settings": db.get_settings()}
 
 
-# ------------------------------------------------------------------ profiles
-@app.get("/api/profiles")
-async def api_list_profiles(_: str = Depends(_require_auth)):
-    return {"profiles": db.list_profiles()}
+# ------------------------------------------------------------------ admin avatar (profile picture)
+AVATAR_DEFAULTS = ("default-1", "default-2", "default-3")
 
 
-@app.post("/api/profiles")
-async def api_create_profile(request: Request, _: str = Depends(_require_auth)):
+def _custom_avatar_path() -> str:
+    return os.path.join(config.DATA_DIR, "admin_avatar.png")
+
+
+def _avatar_info(settings: dict) -> dict:
+    choice = settings.get("admin_avatar") or "default-1"
+    if choice == "custom" and os.path.exists(_custom_avatar_path()):
+        return {"avatar": "custom", "url": "/api/avatar"}
+    if choice not in AVATAR_DEFAULTS:
+        choice = "default-1"
+    return {"avatar": choice, "url": f"/static/img/avatars/{choice}.svg"}
+
+
+@app.get("/api/avatar")
+async def api_avatar(_: str = Depends(_require_auth)):
+    """Serve the admin's custom profile picture (defaults are static SVGs)."""
+    settings = db.get_settings()
+    if settings.get("admin_avatar") == "custom" and os.path.exists(_custom_avatar_path()):
+        return FileResponse(_custom_avatar_path(), media_type="image/png",
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse({"ok": False}, status_code=404)
+
+
+@app.post("/api/admin-avatar")
+async def api_set_admin_avatar(request: Request, _: str = Depends(_require_auth)):
+    """Set the admin profile picture: upload an image, or pick a default."""
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file = form.get("file")
+        if file is None or not getattr(file, "filename", None):
+            raise HTTPException(400, "no-file")
+        data = await file.read()
+        if len(data) > 4 * 1024 * 1024:
+            raise HTTPException(400, "too-large")
+        try:
+            img = PILImage.open(io.BytesIO(data))
+            img = img.convert("RGB")
+        except Exception:  # noqa: BLE001
+            raise HTTPException(400, "invalid-image")
+        img.thumbnail((512, 512))
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        img.save(_custom_avatar_path(), "PNG")
+        db.set_setting("admin_avatar", "custom")
+        db.add_event("info", "avatar-set", "custom", ip=_client_ip(request))
+        return {"ok": True, "avatar": "custom"}
+
     payload = await request.json()
-    proto = payload.get("protocol", "vless")
-    if proto not in ("vless", "vmess", "trojan", "shadowsocks"):
-        raise HTTPException(400, "invalid-protocol")
-    transport, security = _normalize_protocol_fields(
-        proto, payload.get("transport", "ws"), payload.get("security", "tls")
-    )
-    fp = payload.get("fingerprint", "chrome")
-    if fp not in config.VALID_FINGERPRINTS:
-        fp = "chrome"
-    alpn = payload.get("alpn", "http/1.1")
-    if alpn not in config.VALID_ALPNS:
-        alpn = "http/1.1"
-    profile = db.create_profile({
-        "name": payload.get("name", "پروفایل"),
-        "protocol": proto,
-        "transport": transport,
-        "security": security,
-        "fingerprint": fp,
-        "alpn": alpn,
-    })
-    db.add_event("info", "profile-create", f"{profile['name']} ({proto})", ip=_client_ip(request))
-    return {"ok": True, "profile": profile}
-
-
-@app.patch("/api/profiles/{profile_id}")
-async def api_update_profile(profile_id: int, request: Request, _: str = Depends(_require_auth)):
-    payload = await request.json()
-    fields = {k: payload[k] for k in ("name", "protocol", "transport", "security", "fingerprint", "alpn") if k in payload}
-    if "protocol" in fields and fields["protocol"] not in ("vless", "vmess", "trojan", "shadowsocks"):
-        raise HTTPException(400, "invalid-protocol")
-    proto = fields.get("protocol") or (db.get_profile(profile_id) or {}).get("protocol", "vless")
-    if "transport" in fields or "security" in fields:
-        t, s = _normalize_protocol_fields(proto, fields.get("transport", "ws"), fields.get("security", "tls"))
-        fields["transport"], fields["security"] = t, s
-    if "fingerprint" in fields and fields["fingerprint"] not in config.VALID_FINGERPRINTS:
-        fields["fingerprint"] = "chrome"
-    if "alpn" in fields and fields["alpn"] not in config.VALID_ALPNS:
-        fields["alpn"] = "http/1.1"
-    updated = db.update_profile(profile_id, fields)
-    if not updated:
-        raise HTTPException(404, "not-found-or-builtin")
-    return {"ok": True, "profile": updated}
-
-
-@app.delete("/api/profiles/{profile_id}")
-async def api_delete_profile(profile_id: int, request: Request, _: str = Depends(_require_auth)):
-    if not db.delete_profile(profile_id):
-        raise HTTPException(404, "not-found-or-builtin")
-    db.add_event("warn", "profile-delete", str(profile_id), ip=_client_ip(request))
-    return {"ok": True}
+    choice = payload.get("avatar")
+    if choice not in AVATAR_DEFAULTS:
+        raise HTTPException(400, "invalid-avatar")
+    db.set_setting("admin_avatar", choice)
+    db.add_event("info", "avatar-set", choice, ip=_client_ip(request))
+    return {"ok": True, "avatar": choice}
 
 
 # ------------------------------------------------------------------ connection diagnostics
