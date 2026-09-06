@@ -8,10 +8,12 @@
   const { $, $$, esc, ICONS } = U;
 
   // ---------------- shared bits ----------------
-  const PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks'];
-  const TRANSPORTS = ['ws', 'xhttp', 'grpc', 'tcp'];
+  const PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria2'];
+  const TRANSPORTS = ['ws', 'xhttp', 'grpc', 'tcp', 'httpupgrade'];
   const FINGERPRINTS = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized'];
   const ALPNS = ['http/1.1', 'h2,http/1.1', 'h3,h2,http/1.1', ''];
+  // Protocols that have no transport/security concept in the UI.
+  const PROTO_NO_NET = { hysteria2: true };
 
   function flagFor(cc) {
     cc = (cc || '').toUpperCase().trim();
@@ -192,6 +194,21 @@
       input.value = key;
       preview.src = avatarUrl(key);
     });
+  }
+
+  // Protocols like Hysteria2 have no transport/security pickers — disable them.
+  function wireProtoDeps(rootEl) {
+    const pSel = rootEl.querySelector('select[name="protocol"]');
+    const tSel = rootEl.querySelector('select[name="transport"]');
+    const sSel = rootEl.querySelector('select[name="security"]');
+    if (!pSel) return;
+    const apply = () => {
+      const noNet = !!PROTO_NO_NET[pSel.value];
+      if (tSel) tSel.disabled = noNet;
+      if (sSel) sSel.disabled = noNet;
+    };
+    pSel.addEventListener('change', apply);
+    apply();
   }
 
   // ---------------- form field builders ----------------
@@ -583,6 +600,7 @@
              <button class="btn primary" id="saveUserBtn">${I18N.t('save')}</button>`,
     });
     wireAvatarPicker(m.query('#userForm'));
+    wireProtoDeps(m.query('#userForm'));
     I18N.apply();
     m.query('#saveUserBtn').addEventListener('click', async () => {
       const body = collectUserForm(m.query('#userForm'));
@@ -758,6 +776,7 @@
     });
     I18N.apply();
     wireAvatarPicker(m.query('#cfgForm'));
+    wireProtoDeps(m.query('#cfgForm'));
     preview();
     m.query('#cfgForm').addEventListener('input', U.debounce(preview, 150));
     m.query('#saveCfgBtn').addEventListener('click', async () => {

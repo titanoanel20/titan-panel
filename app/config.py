@@ -40,6 +40,38 @@ TLS_KEY_FILE = os.environ.get("TITAN_TLS_KEY", "")
 REALITY_DEST = os.environ.get("TITAN_REALITY_DEST", "1.1.1.1:443")
 REALITY_SNI = os.environ.get("TITAN_REALITY_SNI", "www.microsoft.com")
 
+# ------------------------------------------------------------------ Hysteria2
+# Hysteria2 runs over QUIC (UDP). The inbound binds on the public interface and
+# terminates TLS itself (needs TITAN_TLS_CERT / TITAN_TLS_KEY).
+XRAY_HY2_PORT = int(os.environ.get("XRAY_HY2_PORT", "443"))            # UDP
+# Salamander obfuscation password ("" = off). Requires a recent Xray-core.
+HY2_OBFS = os.environ.get("TITAN_HY2_OBFS", "")
+# HTTP/3 masquerade for unauthenticated probes ("" = off): proxy mode only.
+HY2_MASQUERADE_URL = os.environ.get("TITAN_HY2_MASQUERADE_URL", "")
+
+# ------------------------------------------------------------------ HTTPUpgrade
+# HTTPUpgrade transport (like XHTTP) — served through nginx on the public port.
+XRAY_HTTPUPGRADE_PORT = int(os.environ.get("XRAY_HTTPUPGRADE_PORT", "10013"))
+
+# ------------------------------------------------------------------ Fallback
+# Single-port fallback: VLESS(TCP+TLS) + WebSocket paths served on one port.
+# 0 = disabled. On a VPS/Docker set it to 443; on Railway pick a TCP-proxied
+# port (443 is reserved for the HTTPS edge). Needs TITAN_TLS_CERT/_KEY.
+FALLBACK_PORT = int(os.environ.get("TITAN_FALLBACK_PORT", "0") or 0)
+
+
+def tls_ready() -> bool:
+    """True when a certificate pair is configured and present on disk."""
+    return bool(
+        TLS_CERT_FILE and TLS_KEY_FILE
+        and os.path.exists(TLS_CERT_FILE) and os.path.exists(TLS_KEY_FILE)
+    )
+
+
+def fallback_active() -> bool:
+    """True when the single-port fallback inbound should be generated."""
+    return bool(FALLBACK_PORT) and tls_ready()
+
 # Xray binary location + feature flag (dev mode runs the panel without Xray).
 XRAY_BIN = os.environ.get("XRAY_BIN", "/usr/local/bin/xray")
 
@@ -125,5 +157,6 @@ BLOCKED_TAGS = {"block-ads", "block-iran", "block-adult", "block-custom"}
 
 VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
 VALID_ALPNS = {"http/1.1", "h2,http/1.1", "h3,h2,http/1.1", ""}
-VALID_TRANSPORTS = {"ws", "xhttp", "grpc", "tcp"}
+VALID_TRANSPORTS = {"ws", "xhttp", "grpc", "tcp", "httpupgrade"}
 VALID_SECURITY = {"none", "tls", "reality"}
+VALID_PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "hysteria2"}

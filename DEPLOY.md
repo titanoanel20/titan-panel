@@ -236,4 +236,42 @@ TCP خام روی پورت‌های جداگانه و مستقیم سرو می�
 
 ---
 
+## ۹) Hysteria2، HTTPUpgrade و Fallback (فاز ۱ — سرعت و ضد-فیلترینگ)
+
+### Hysteria2 (پیشنهادی برای سرعت بالا)
+Hysteria2 روی **QUIC/UDP** کار می‌کند و روی شبکه‌های پرتاخیر/ناپایدار (موبایل، اینترنت ایران) سرعت و پینگ بهتری نسبت به TCP می‌دهد. از داخل UI: پروتکل `HYSTERIA2` را انتخاب کنید — لینک `hysteria2://` تولید می‌شود.
+
+| متغیر | پیش‌فرض | توضیح |
+|---|---|---|
+| `XRAY_HY2_PORT` | `443` | پورت UDP که اینباند Hysteria2 روی آن گوش می‌دهد |
+| `TITAN_TLS_CERT` / `TITAN_TLS_KEY` | — | **الزامی**؛ Hysteria2 خودش TLS (ALPN `h3`) را خاتمه می‌دهد |
+| `TITAN_HY2_OBFS` | خالی (خاموش) | رمز Salamander؛ با ست‌شدن، لینک `obfs=salamander` می‌گیرد و ترافیک UDP ماسک می‌شود (نیاز به Xray-core جدید) |
+| `TITAN_HY2_MASQUERADE_URL` | خالی (خاموش) | Masquerade برای پراب‌های بدون احراز: پاسخ را به یک سایت واقعی proxy می‌کند |
+
+نکات:
+- پورت **UDP** 443 را باز کنید. در Docker: `-p 443:443/udp`. روی Railway بررسی کنید که سرویس UDP را expose کند (در غیر این صورت از VPS استفاده کنید).
+- Hysteria2 جدا از TCP 443 کار می‌کند؛ با Fallback زیر تداخلی ندارد (UDP ≠ TCP).
+- کلاینت‌ها: v2rayN، NekoBox، sing-box، hysteria CLI (آدرس `hysteria2://...` را مستقیم import کنید).
+
+### HTTPUpgrade (ترنسپورت سبک روی CDN)
+ترنسپورت جدید `HTTPUPGRADE` (شبیه XHTTP ولی سبک‌تر) برای VLESS و VMess اضافه شده. از داخل UI در فیلد «انتقال» انتخاب کنید.
+- مسیر: `/hup` → اینباند داخلی پورت `10013` (`XRAY_HTTPUPGRADE_PORT`)
+- مثل WS از پشت nginx/CDN سرو می‌شود؛ به پورت عمومی معمولی (443) وصل می‌شود.
+- nginx از قبل مسیر `/hup` را به `127.0.0.1:10013` فوروارد می‌کند.
+
+### Fallback — همه روی یک پورت
+با `TITAN_FALLBACK_PORT` می‌توانید **VLESS(TCP+TLS) + سه مسیر WebSocket** را روی یک پورت واحد سرو کنید (فقط اینباند VLESS+TLS ساخته می‌شود و مسیرهای WS را با sniffing به اینباندهای داخلی می‌فرستد).
+
+| متغیر | پیش‌فرض | توضیح |
+|---|---|---|
+| `TITAN_FALLBACK_PORT` | `0` (خاموش) | پورت تک‌ورودی. روی VPS/Docker روی `443` بگذارید؛ روی Railway پورت 443 در اختیار HTTPS است، پس یک پورت TCP-proxy دیگر (مثلاً 8443) انتخاب کنید |
+| `TITAN_TLS_CERT` / `TITAN_TLS_KEY` | — | **الزامی** (اینباند Fallback خودش TLS را خاتمه می‌دهد) |
+
+رفتار:
+- وقتی فعال است، کاربر `VLESS + TCP + TLS` به جای پورت 10008 روی پورت Fallback سرو می‌شود (لینک هم به همان پورت اشاره می‌کند).
+- مسیرهای `/vl-ws`، `/vm-ws` و `/tr-ws` هم از همین پورت قابل دسترسی می‌شوند (اینباندهای WS داخلی با PROXY protocol متصل می‌شوند).
+- بدون کاربر VLESS+TCP+TLS، اینباند Fallback ساخته نمی‌شود.
+
+---
+
 <div align="center"><b>TiTaN</b> — fast, lightweight, magical ⚡</div>

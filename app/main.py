@@ -156,8 +156,18 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
     if host is None:
         host = _public_host(request)
         port = _link_port(settings)
-    if (u.get("transport") or "ws").lower() == "tcp":
-        port = _tcp_port(u.get("protocol", "vless"), u.get("security", "none"))
+    proto = (u.get("protocol") or "vless").lower()
+    transport = (u.get("transport") or "ws").lower()
+    sec = (u.get("security") or "none").lower()
+    if proto == "hysteria2":
+        # Hysteria2 always dials the QUIC/UDP port (default 443).
+        port = config.XRAY_HY2_PORT
+    elif transport == "tcp":
+        if proto == "vless" and sec == "tls" and config.fallback_active():
+            # Single-port fallback: VLESS(TCP+TLS) is served on the fallback port.
+            port = config.FALLBACK_PORT
+        else:
+            port = _tcp_port(proto, sec)
     return host, port
 
 
@@ -678,7 +688,7 @@ async def api_create_user(request: Request, _: str = Depends(_require_auth)):
     settings = db.get_settings()
     uid = secrets.token_hex(8)
     protocol = payload.get("protocol", "vless")
-    if protocol not in ("vless", "vmess", "trojan", "shadowsocks"):
+    if protocol not in config.VALID_PROTOCOLS:
         raise HTTPException(400, "invalid-protocol")
     transport, security = _normalize_protocol_fields(
         protocol,
@@ -742,7 +752,9 @@ async def api_update_user(uid: str, request: Request, _: str = Depends(_require_
     if "avatar" in payload:
         fields["avatar"] = _sanitize_avatar_key(payload.get("avatar"))
     proto = fields.get("protocol", user.get("protocol", "vless"))
-    if "transport" in fields or "security" in fields:
+    if proto not in config.VALID_PROTOCOLS:
+        raise HTTPException(400, "invalid-protocol")
+    if "transport" in fields or "security" in fields or proto == "hysteria2":
         t, s = _normalize_protocol_fields(
             proto,
             fields.get("transport", user.get("transport", "ws")),
@@ -838,15 +850,19 @@ def _expire_from_days(days) -> float | None:
 
 
 _SERVED_TRANSPORTS = {
-    "vless": {"ws", "xhttp", "grpc", "tcp"},
-    "vmess": {"ws", "xhttp", "grpc", "tcp"},
+    "vless": {"ws", "xhttp", "grpc", "tcp", "httpupgrade"},
+    "vmess": {"ws", "xhttp", "grpc", "tcp", "httpupgrade"},
     "trojan": {"ws", "tcp"},
     "shadowsocks": set(),
+    "hysteria2": set(),
 }
 
 
 def _normalize_protocol_fields(protocol: str, transport, security) -> tuple[str, str]:
     """Coerce transport/security to values the server can actually serve."""
+    if protocol == "hysteria2":
+        # Hysteria2 has no transport and is always TLS (QUIC).
+        return "", "tls"
     t = (transport or "ws").lower()
     s = (security or "tls").lower()
     allowed = _SERVED_TRANSPORTS.get(protocol, {"ws"})

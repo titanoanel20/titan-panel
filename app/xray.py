@@ -85,6 +85,12 @@ def generate_xray_config() -> dict:
     # Shadowsocks users share the ss inbound via method+password pairs.
     ss_users = [u for u in users if u["enabled"] and u["protocol"] == "shadowsocks"]
 
+    # TLS certificate presence gates every TLS-terminating inbound (raw-TCP TLS,
+    # Hysteria2, single-port fallback). Computed up front so the WS inbounds can
+    # opt into PROXY-protocol when the fallback outer forwards to them.
+    tls_ok = config.tls_ready()
+    fallback_mode = bool(config.FALLBACK_PORT) and tls_ok
+
     outbounds = [
         {"protocol": "freedom", "tag": "direct"},
         {"protocol": "blackhole", "tag": "block"},
@@ -115,7 +121,7 @@ def generate_xray_config() -> dict:
             "port": config.XRAY_VLESS_WS_PORT,
             "protocol": "vless",
             "settings": {"clients": vless_clients, "decryption": "none"},
-            "streamSettings": {"network": "ws", "wsSettings": {"path": "/vl-ws"}},
+            "streamSettings": {"network": "ws", "wsSettings": {"path": "/vl-ws", "acceptProxyProtocol": fallback_mode}},
             "tag": "in-vless-ws",
         })
     if vmess_clients:
@@ -124,7 +130,7 @@ def generate_xray_config() -> dict:
             "port": config.XRAY_VMESS_WS_PORT,
             "protocol": "vmess",
             "settings": {"clients": vmess_clients},
-            "streamSettings": {"network": "ws", "wsSettings": {"path": "/vm-ws"}},
+            "streamSettings": {"network": "ws", "wsSettings": {"path": "/vm-ws", "acceptProxyProtocol": fallback_mode}},
             "tag": "in-vmess-ws",
         })
     if trojan_clients:
@@ -133,7 +139,7 @@ def generate_xray_config() -> dict:
             "port": config.XRAY_TROJAN_WS_PORT,
             "protocol": "trojan",
             "settings": {"clients": trojan_clients},
-            "streamSettings": {"network": "ws", "wsSettings": {"path": "/tr-ws"}},
+            "streamSettings": {"network": "ws", "wsSettings": {"path": "/tr-ws", "acceptProxyProtocol": fallback_mode}},
             "tag": "in-trojan-ws",
         })
 
@@ -157,6 +163,28 @@ def generate_xray_config() -> dict:
             "settings": {"clients": xhttp_vmess},
             "streamSettings": {"network": "xhttp", "xhttpSettings": {"path": "/xhttp"}},
             "tag": "in-vmess-xhttp",
+        })
+
+    # HTTPUpgrade inbound shared by VLESS + VMess users (like XHTTP, lighter).
+    hup_vless = [c for c in vless_clients]
+    hup_vmess = [c for c in vmess_clients]
+    if hup_vless:
+        inbounds.append({
+            "listen": "127.0.0.1",
+            "port": config.XRAY_HTTPUPGRADE_PORT,
+            "protocol": "vless",
+            "settings": {"clients": hup_vless, "decryption": "none"},
+            "streamSettings": {"network": "httpupgrade", "httpupgradeSettings": {"path": "/hup"}},
+            "tag": "in-vless-httpupgrade",
+        })
+    if hup_vmess:
+        inbounds.append({
+            "listen": "127.0.0.1",
+            "port": config.XRAY_HTTPUPGRADE_PORT,
+            "protocol": "vmess",
+            "settings": {"clients": hup_vmess},
+            "streamSettings": {"network": "httpupgrade", "httpupgradeSettings": {"path": "/hup"}},
+            "tag": "in-vmess-httpupgrade",
         })
 
     # gRPC inbound shared by VLESS + VMess users.
@@ -226,10 +254,6 @@ def generate_xray_config() -> dict:
         })
 
     # TLS over raw TCP — needs a certificate Xray can present.
-    tls_ok = (
-        config.TLS_CERT_FILE and config.TLS_KEY_FILE
-        and os.path.exists(config.TLS_CERT_FILE) and os.path.exists(config.TLS_KEY_FILE)
-    )
     if (vless_tcp_tls or vmess_tcp_tls or trojan_tcp) and not tls_ok:
         log.warning("TCP-TLS users exist but no certificate is configured "
                     "(TITAN_TLS_CERT / TITAN_TLS_KEY) — TLS inbounds skipped")
@@ -241,7 +265,7 @@ def generate_xray_config() -> dict:
             }],
             "alpn": ["h2", "http/1.1"],
         }
-        if vless_tcp_tls:
+        if vless_tcp_tls and not fallback_mode:
             inbounds.append({
                 "listen": "0.0.0.0", "port": config.XRAY_TCP_VLESS_TLS_PORT, "protocol": "vless",
                 "settings": {"clients": vless_tcp_tls, "decryption": "none"},
@@ -261,6 +285,40 @@ def generate_xray_config() -> dict:
                 "settings": {"clients": trojan_tcp},
                 "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": tls_settings},
                 "tag": "in-trojan-tcp",
+            })
+
+    # ---------------- single-port fallback (VLESS-TLS + WS paths on one port) --
+    # One VLESS(TCP+TLS) inbound terminates TLS and offloads the WS paths to the
+    # local plain WS inbounds (PROXY protocol), so VLESS-TLS, VLESS-WS, VMess-WS
+    # and Trojan-WS can all be reached through a single port.
+    if fallback_mode:
+        if not vless_tcp_tls:
+            log.warning("TITAN_FALLBACK_PORT set but no VLESS(TCP+TLS) users — "
+                        "fallback inbound skipped")
+        else:
+            fb_fallbacks = [
+                {"path": "/vl-ws", "dest": config.XRAY_VLESS_WS_PORT, "xver": 1},
+                {"path": "/vm-ws", "dest": config.XRAY_VMESS_WS_PORT, "xver": 1},
+                {"path": "/tr-ws", "dest": config.XRAY_TROJAN_WS_PORT, "xver": 1},
+            ]
+            inbounds.append({
+                "listen": "0.0.0.0", "port": config.FALLBACK_PORT, "protocol": "vless",
+                "settings": {
+                    "clients": vless_tcp_tls,
+                    "decryption": "none",
+                    "fallbacks": fb_fallbacks,
+                },
+                "streamSettings": {
+                    "network": "tcp", "security": "tls",
+                    "tlsSettings": {
+                        "certificates": [{
+                            "certificateFile": config.TLS_CERT_FILE,
+                            "keyFile": config.TLS_KEY_FILE,
+                        }],
+                        "alpn": ["http/1.1"],
+                    },
+                },
+                "tag": "in-vless-fallback",
             })
 
     if vless_tcp_reality:
@@ -283,6 +341,48 @@ def generate_xray_config() -> dict:
         else:
             log.warning("Reality users exist but no private key is available — "
                         "Reality inbound skipped")
+
+    # ---------------- Hysteria2 (QUIC / UDP) ----------------
+    hy2_users = [u for u in users if u["enabled"] and u["protocol"] == "hysteria2"]
+    if hy2_users:
+        if not tls_ok:
+            log.warning("Hysteria2 users exist but no certificate is configured "
+                        "(TITAN_TLS_CERT / TITAN_TLS_KEY) — Hysteria2 inbound skipped")
+        else:
+            hy2_stream = {
+                "network": "hysteria",
+                "security": "tls",
+                "tlsSettings": {
+                    "certificates": [{
+                        "certificateFile": config.TLS_CERT_FILE,
+                        "keyFile": config.TLS_KEY_FILE,
+                    }],
+                    "alpn": ["h3"],
+                },
+                "hysteriaSettings": {"version": 2},
+            }
+            if config.HY2_OBFS:
+                # Salamander UDP masking (needs a recent Xray-core build).
+                hy2_stream["udpmasks"] = [{
+                    "type": "salamander",
+                    "settings": {"password": config.HY2_OBFS},
+                }]
+            if config.HY2_MASQUERADE_URL:
+                hy2_stream["hysteriaSettings"]["masquerade"] = {
+                    "type": "proxy",
+                    "url": config.HY2_MASQUERADE_URL,
+                    "rewriteHost": True,
+                }
+            inbounds.append({
+                "listen": "0.0.0.0",
+                "port": config.XRAY_HY2_PORT,
+                "protocol": "hysteria",
+                "settings": {"version": 2, "users": [
+                    {"auth": u["uuid"], "level": 0, "email": u["uid"]} for u in hy2_users
+                ]},
+                "streamSettings": hy2_stream,
+                "tag": "in-hysteria2",
+            })
 
     return {
         "log": {"loglevel": "warning"},

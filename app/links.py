@@ -12,16 +12,19 @@ import json
 import time
 from urllib.parse import quote
 
+from . import config
+
 SS_METHODS = [
     "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm",
 ]
 
 # transports the panel can actually serve, per protocol
 SERVED_TRANSPORTS = {
-    "vless": {"ws", "xhttp", "grpc", "tcp"},
-    "vmess": {"ws", "xhttp", "grpc", "tcp"},
+    "vless": {"ws", "xhttp", "grpc", "tcp", "httpupgrade"},
+    "vmess": {"ws", "xhttp", "grpc", "tcp", "httpupgrade"},
     "trojan": {"ws", "tcp"},
     "shadowsocks": set(),
+    "hysteria2": set(),
 }
 
 
@@ -95,7 +98,7 @@ def build_vless_link(host: str, port: int, user: dict, settings: dict) -> str:
     sec = "tls" if security == "tls" else "none"
     if transport == "grpc":
         return f"vless://{uuid}@{host}:{port}?encryption=none&security={sec}&{_grpc_params(_grpc_service(user), sni, fp)}#{name}"
-    if transport in ("ws", "xhttp"):
+    if transport in ("ws", "xhttp", "httpupgrade"):
         params = _host_params(host, _path_for("vless", transport), sni, fp, alpn, transport, settings)
         return f"vless://{uuid}@{host}:{port}?encryption=none&security={sec}&{params}#{name}"
     if transport == "tcp":
@@ -118,7 +121,7 @@ def build_vmess_link(host: str, port: int, user: dict, settings: dict) -> str:
     alpn = user.get("alpn", settings.get("default_alpn", "http/1.1"))
     sni = settings.get("sni_override") or host
 
-    net = transport if transport in ("ws", "xhttp", "grpc") else "tcp"
+    net = transport if transport in ("ws", "xhttp", "grpc", "httpupgrade") else "tcp"
     vm = {
         "v": "2",
         "ps": "TiTaN-" + user["name"] + "-VMess-" + net.upper(),
@@ -138,6 +141,8 @@ def build_vmess_link(host: str, port: int, user: dict, settings: dict) -> str:
     }
     if transport == "xhttp":
         vm["path"] = _path_for("vmess", "xhttp")
+    if transport == "httpupgrade":
+        vm["path"] = _path_for("vmess", "httpupgrade")
     if transport == "grpc":
         vm["path"] = _grpc_service(user)
     b64 = base64.b64encode(json.dumps(vm, separators=(",", ":")).encode()).decode()
@@ -174,6 +179,17 @@ def build_ss_link(host: str, port: int, user: dict, settings: dict) -> str:
     return f"ss://{b64}@{host}:{port}#{quote('TiTaN-' + user['name'] + '-SS')}"
 
 
+def build_hy2_link(host: str, port: int, user: dict, settings: dict) -> str:
+    """Hysteria2 (QUIC/UDP) link. The user's uuid doubles as the auth password."""
+    auth = user["uuid"]
+    sni = settings.get("sni_override") or host
+    name = quote("TiTaN-" + user["name"] + "-Hysteria2")
+    params = f"sni={quote(sni, safe='')}&insecure=0&alpn=h3"
+    if config.HY2_OBFS:
+        params += f"&obfs=salamander&obfs-password={quote(config.HY2_OBFS, safe='')}"
+    return f"hysteria2://{quote(auth, safe='')}@{host}:{port}/?{params}#{name}"
+
+
 def build_links(host: str, port: int, user: dict, settings: dict) -> dict:
     """Return {"main": link, "all": [links], "info": [dummy status links]}."""
     out = {}
@@ -185,6 +201,8 @@ def build_links(host: str, port: int, user: dict, settings: dict) -> dict:
         out["trojan"] = build_trojan_link(host, port, user, settings)
     elif user["protocol"] == "shadowsocks":
         out["shadowsocks"] = build_ss_link(host, port, user, settings)
+    elif user["protocol"] == "hysteria2":
+        out["hysteria2"] = build_hy2_link(host, port, user, settings)
 
     all_links = list(out.values())
 
@@ -212,6 +230,8 @@ def _path_for(protocol: str, transport: str) -> str:
         return {"vless": "/vl-ws", "vmess": "/vm-ws", "trojan": "/tr-ws"}.get(protocol, "/ws")
     if transport == "xhttp":
         return "/xhttp"
+    if transport == "httpupgrade":
+        return "/hup"
     return "/ws"
 
 
