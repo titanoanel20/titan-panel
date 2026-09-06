@@ -37,6 +37,7 @@ from fastapi.templating import Jinja2Templates
 from . import APP_NAME, APP_VERSION, config, db, security, state, xray
 from . import tasks as bg
 from .colo_map import describe_colo
+from .geo import detect_location, flag_from_code
 from .links import build_links, subscription_text
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -181,10 +182,7 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
 
 def _flag_for(code: str) -> str:
     """Regional-indicator emoji from a 2-letter ISO country code."""
-    code = (code or "").upper().strip()
-    if len(code) == 2 and code.isalpha():
-        return "".join(chr(0x1F1E6 + (ord(c) - ord("A"))) for c in code)
-    return "🏳️"
+    return flag_from_code(code)
 
 
 # ------------------------------------------------------------------ node status service
@@ -815,14 +813,19 @@ async def api_create_node(request: Request, _: str = Depends(_require_auth)):
     name = (payload.get("name") or "").strip()[:64]
     if not name:
         raise HTTPException(400, "name-required")
-    cc = (payload.get("country_code") or "").strip()[:2]
+    address = (payload.get("address") or "").strip()[:200]
+    cc = (payload.get("country_code") or "").strip()[:2].upper()
+    # auto-detect country/flag when the admin didn't set one but gave an address
+    loc = {}
+    if not cc and address:
+        loc = await asyncio.to_thread(detect_location, address)
     node = db.create_node({
         "name": name,
-        "address": (payload.get("address") or "").strip()[:200],
-        "city": (payload.get("city") or "").strip()[:64],
-        "country": (payload.get("country") or "").strip()[:64],
-        "country_code": cc,
-        "flag": payload.get("flag") or _flag_for(cc),
+        "address": address,
+        "city": (payload.get("city") or loc.get("city") or "").strip()[:64],
+        "country": (payload.get("country") or loc.get("country") or "").strip()[:64],
+        "country_code": cc or loc.get("country_code", ""),
+        "flag": payload.get("flag") or _flag_for(cc or loc.get("country_code")),
     })
     db.add_event("info", "node-create", name, ip=_client_ip(request))
     return {"ok": True, "node": _serialize_node(node, await _node_status(node))}
@@ -838,6 +841,15 @@ async def api_update_node(node_id: int, request: Request, _: str = Depends(_requ
     for k in ("name", "address", "city", "country", "country_code", "flag", "enabled"):
         if k in payload:
             fields[k] = payload[k]
+    # auto-detect country/flag if an address is given and none is known
+    if "address" in fields and fields.get("address") and not fields.get("country_code") \
+            and not fields.get("flag") and not node.get("country_code"):
+        loc = await asyncio.to_thread(detect_location, fields["address"])
+        if loc:
+            fields.setdefault("city", loc["city"])
+            fields.setdefault("country", loc["country"])
+            fields["country_code"] = loc["country_code"]
+            fields["flag"] = loc["flag"]
     if "country_code" in fields and not payload.get("flag"):
         fields["flag"] = _flag_for(fields["country_code"])
     updated = db.update_node(node_id, fields)

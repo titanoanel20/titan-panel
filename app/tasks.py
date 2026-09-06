@@ -101,7 +101,7 @@ async def _refresh_location():
             loc = describe_colo(LOCATION.get("colo"))
             if loc.get("city") and loc.get("city") != "Unknown":
                 db.set_local_node_location(
-                    loc["city"], loc["country"], "", loc["flag"]
+                    loc["city"], loc["country"], loc.get("country_code", ""), loc["flag"]
                 )
         except Exception:  # noqa: BLE001
             pass
@@ -143,12 +143,40 @@ async def _maybe_backup():
         log.error("backup failed: %s", e)
 
 
+async def _enrich_node_locations():
+    """Fill missing country/flag for nodes that have an address, every 6h."""
+    from .geo import detect_location
+
+    await asyncio.sleep(15)
+    while True:
+        try:
+            for n in db.list_nodes():
+                if n.get("is_local"):
+                    continue
+                if n.get("country_code") or not (n.get("address") or "").strip():
+                    continue
+                loc = await asyncio.to_thread(detect_location, n["address"])
+                if loc:
+                    db.update_node(n["id"], {
+                        "city": n.get("city") or loc["city"],
+                        "country": n.get("country") or loc["country"],
+                        "country_code": loc["country_code"],
+                        "flag": loc["flag"],
+                    })
+            await asyncio.sleep(6 * 3600)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(600)
+
+
 def start_background_tasks(app):
     tasks = [
         asyncio.create_task(_periodic_flush()),
         asyncio.create_task(_housekeeping()),
         asyncio.create_task(_keep_alive()),
         asyncio.create_task(_refresh_location()),
+        asyncio.create_task(_enrich_node_locations()),
     ]
     app.state.titan_tasks = tasks
     return tasks

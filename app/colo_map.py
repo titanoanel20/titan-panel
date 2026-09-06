@@ -62,10 +62,32 @@ COLO_MAP = {
     "BAK": ("Baku", "Azerbaijan", "🇦🇿"),
 }
 
+# country name -> ISO 3166-1 alpha-2, for the flag images
+COUNTRY_CODE = {
+    "Argentina": "AR", "Armenia": "AM", "Australia": "AU", "Austria": "AT",
+    "Azerbaijan": "AZ", "Bahrain": "BH", "Belgium": "BE", "Brazil": "BR",
+    "Canada": "CA", "Chile": "CL", "Czechia": "CZ", "Denmark": "DK",
+    "Egypt": "EG", "Finland": "FI", "France": "FR", "Georgia": "GE",
+    "Germany": "DE", "Hong Kong": "HK", "India": "IN", "Iran": "IR",
+    "Iraq": "IQ", "Ireland": "IE", "Israel": "IL", "Italy": "IT",
+    "Japan": "JP", "Jordan": "JO", "Kuwait": "KW", "Lebanon": "LB",
+    "Netherlands": "NL", "Norway": "NO", "Oman": "OM", "Poland": "PL",
+    "Qatar": "QA", "Russia": "RU", "Saudi Arabia": "SA", "Singapore": "SG",
+    "South Africa": "ZA", "South Korea": "KR", "Spain": "ES", "Sweden": "SE",
+    "Switzerland": "CH", "Turkey": "TR", "United Arab Emirates": "AE",
+    "United Kingdom": "GB", "United States": "US",
+}
+
 
 def describe_colo(colo: str | None) -> dict:
     code = (colo or "").upper().strip()
     if code in COLO_MAP:
         city, country, flag = COLO_MAP[code]
-        return {"colo": code, "city": city, "country": country, "flag": flag}
-    return {"colo": code or "?", "city": "Unknown", "country": "Unknown", "flag": "🏳️"}
+        return {
+            "colo": code,
+            "city": city,
+            "country": country,
+            "country_code": COUNTRY_CODE.get(country, ""),
+            "flag": flag,
+        }
+    return {"colo": code or "?", "city": "Unknown", "country": "Unknown", "country_code": "", "flag": "🏳️"}

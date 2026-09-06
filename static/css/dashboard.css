@@ -1270,3 +1270,24 @@ html[data-theme="light"] .node-card { background: #fff; border-color: var(--bord
 }
 .gallery-item:hover .gallery-del { display: block; }
 .av-pick-preview { cursor: pointer; }
+
+/* country flags: SVG image (renders on every OS) with emoji fallback */
+.flag-img {
+  width: 26px;
+  height: 19px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12);
+  display: inline-block;
+}
+.flag-wrap { display: inline-flex; align-items: center; line-height: 0; flex-shrink: 0; }
+.flag-wrap .flag-emoji { display: none; }
+.flag-wrap.no-img .flag-img { display: none; }
+.flag-wrap.no-img .flag-emoji { display: inline-block; font-size: 18px; line-height: 1; }
+.flag-sm .flag-img { width: 22px; height: 16px; border-radius: 2px; }
+.flag-sm .flag-emoji { font-size: 15px; }
+.flag-lg .flag-img { width: 46px; height: 34px; border-radius: 5px; }
+.flag-lg .flag-emoji { font-size: 36px; }
+.node-inline { display: inline-flex; align-items: center; gap: 8px; }
+.config-node-name { margin-left: 8px; vertical-align: middle; }
+html[data-theme="light"] .flag-img { box-shadow: 0 0 0 1px rgba(0, 0, 0, .12); }

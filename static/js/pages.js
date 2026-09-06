@@ -19,6 +19,25 @@
     return '🏳️';
   }
 
+  // Country flag for a node: SVG image (renders on every OS) with emoji fallback.
+  function flagHtml(n, cls = '') {
+    const cc = ((n && n.country_code) || '').toString().trim();
+    const emoji = (n && n.flag) || flagFor(cc) || '🌐';
+    if (/^[A-Za-z]{2}$/.test(cc)) {
+      const lc = cc.toLowerCase();
+      return `<span class="flag-wrap ${cls}"><img class="flag-img" src="https://flagcdn.com/w40/${lc}.png" srcset="https://flagcdn.com/w80/${lc}.png 2x" alt="${esc(cc.toUpperCase())}" loading="lazy" onerror="this.parentNode.classList.add('no-img')"><span class="flag-emoji">${esc(emoji)}</span></span>`;
+    }
+    return `<span class="flag ${cls}">${esc(emoji)}</span>`;
+  }
+
+  // Emoji flag for plain-text contexts (e.g. <option>).
+  function flagEmoji(n) {
+    const cc = ((n && n.country_code) || '').toString().trim();
+    const fromCc = flagFor(cc);
+    if (fromCc !== '🏳️') return fromCc;
+    return (n && n.flag) || '🌐';
+  }
+
   function protoTag(p) { return `<span class="tag">${esc((p || '').toUpperCase())}</span>`; }
 
   function badge(label, cls) {
@@ -170,7 +189,7 @@
         <label class="field"><span class="field-label" data-i18n="max_requests"></span>
           <input class="input" type="number" min="0" name="max_requests" value="${u?.max_requests || 0}"></label>
         ${nodes ? `<label class="field"><span class="field-label" data-i18n="select_node"></span>
-          <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(n.flag)} ${esc(n.name)}</option>`).join('')}</select></label>` : ''}
+          <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(flagEmoji(n))} ${esc(n.name)}</option>`).join('')}</select></label>` : ''}
         <label class="field full"><span class="field-label" data-i18n="allowed_ips"></span>
           <input class="input" name="allowed_ips" value="${esc((u?.allowed_ips || []).join(','))}" dir="ltr"></label>
         <label class="field full"><span class="field-label" data-i18n="note"></span>
@@ -338,7 +357,7 @@
         const city = (n.city && n.city !== '—') ? n.city : (n.name || '—');
         return `
           <div class="server-row">
-            <div class="server-name"><span class="flag">${esc(n.flag || '🏳️')}</span>${esc(city)}</div>
+            <div class="server-name">${flagHtml(n)}${esc(city)}</div>
             <div class="country-code">${esc((n.country_code || '').toUpperCase()) || '—'}</div>
             <div class="server-status ${isOn ? '' : 'offline'}"><span>${isOn ? I18N.t('online') : I18N.t('offline')}</span></div>
             <div class="ping">${isOn && st.latency_ms != null ? st.latency_ms + 'ms' : '-'}</div>
@@ -366,7 +385,7 @@
         <div class="config-row">
           <div class="config-cell config-name">${esc(u.name)}</div>
           <div class="config-cell">${esc((u.protocol || '').toUpperCase())}</div>
-          <div class="config-cell">${esc(n ? ((n.city && n.city !== '—') ? n.city : n.name) : '—')}</div>
+          <div class="config-cell">${n ? flagHtml(n, 'flag-sm') + '<span class="config-node-name">' + esc((n.city && n.city !== '—') ? n.city : n.name) + '</span>' : '—'}</div>
           <div class="config-cell config-status">${badgeOf(u)}</div>
         </div>`;
       }).join('') : U.empty('⚙️', I18N.t('no_configs'), '');
@@ -583,7 +602,7 @@
         return `<tr>
           <td>${statusBadge(u)}</td>
           <td><div class="cell-main"><span class="cell-title">${esc(u.name)}</span><span class="cell-sub">${esc(u.note || '')}</span></div></td>
-          <td>${n ? esc(n.flag + ' ' + (n.city && n.city !== '—' ? n.city : n.name)) : '—'}</td>
+          <td>${n ? `<span class="node-inline">${flagHtml(n, 'flag-sm')}<span>${esc(n.city && n.city !== '—' ? n.city : n.name)}</span></span>` : '—'}</td>
           <td>${protoTag(u.protocol)}</td>
           <td>${U.fmtDate(u.created_at)}</td>
           <td>${u.expire_at ? U.fmtDate(u.expire_at) : `<span class="cell-sub">${I18N.t('never')}</span>`}</td>
@@ -632,7 +651,7 @@
         <div class="row" style="gap:8px;margin-bottom:8px"><span class="tag">${esc((v.protocol || '').toUpperCase())}</span><span class="tag">${esc((v.transport || '').toUpperCase())}</span><span class="tag">${esc(v.security || '')}</span></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
           <div><span class="cell-sub">${I18N.t('name')}:</span> ${esc(v.name || '—')}</div>
-          <div><span class="cell-sub">${I18N.t('node')}:</span> ${n ? esc(n.flag + ' ' + n.name) : '—'}</div>
+          <div><span class="cell-sub">${I18N.t('node')}:</span> ${n ? flagHtml(n, 'flag-sm') + ' ' + esc(n.name) : '—'}</div>
           <div><span class="cell-sub">${I18N.t('quota')}:</span> ${v.quota_gb > 0 ? v.quota_gb + ' GB' : I18N.t('unlimited')}</div>
           <div><span class="cell-sub">${I18N.t('expiry')}:</span> ${v.expire_days > 0 ? v.expire_days + ' ' + I18N.t('rep_days_7').replace('۷','') + '' : I18N.t('never')}</div>
         </div>`;
@@ -654,7 +673,7 @@
           </div>
           <div class="wiz-section"><h4><span class="step">2</span>${I18N.t('wizard_server')}</h4>
             <label class="field"><span class="field-label" data-i18n="select_node"></span>
-              <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(n.flag)} ${esc(n.name)} — ${esc(n.city !== '—' ? n.city : n.country)}</option>`).join('')}</select>
+              <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(flagEmoji(n))} ${esc(n.name)} — ${esc(n.city !== '—' ? n.city : n.country)}</option>`).join('')}</select>
             </label>
           </div>
           <div class="wiz-section"><h4><span class="step">3</span>${I18N.t('wizard_network')}</h4>
@@ -740,7 +759,7 @@
         const st = n.status || {};
         return `<div class="node-card">
           <div class="n-head">
-            <div class="n-flag">${esc(n.flag || '🏳️')}</div>
+            <div class="n-flag">${flagHtml(n, 'flag-lg')}</div>
             <div class="grow">
               <div class="n-title">${esc(n.name)} ${n.is_local ? `<span class="tag">${I18N.t('local_node')}</span>` : ''}</div>
               <div class="n-sub">${esc([n.city !== '—' ? n.city : '', n.country !== '—' ? n.country : ''].filter(Boolean).join('، ') || '—')} · ${esc((n.country_code || '').toUpperCase())}</div>
@@ -792,7 +811,7 @@
       title: esc(node.name),
       body: `
         <div class="row" style="gap:12px;margin-bottom:14px">
-          <div style="font-size:2.6rem">${esc(node.flag || '🏳️')}</div>
+          <div>${flagHtml(node, 'flag-lg')}</div>
           <div>
             <div style="font-weight:800">${esc(node.name)}</div>
             <div class="cell-sub">${esc([node.city !== '—' ? node.city : '', node.country !== '—' ? node.country : ''].filter(Boolean).join('، ') || '—')}</div>
@@ -1279,7 +1298,7 @@
       const nodes = (await U.apiJson('/api/nodes')).nodes || [];
       $('#connBox').innerHTML = nodes.length ? nodes.map(n => `
         <div class="node-row">
-          <div class="node-flag">${esc(n.flag || '🏳️')}</div>
+          <div class="node-flag">${flagHtml(n, 'flag-lg')}</div>
           <div class="node-meta"><div class="node-name">${esc(n.name)}</div><div class="node-city">${esc(n.city !== '—' ? n.city : n.country)}</div></div>
           ${nodeBadge(n)}
           <span class="node-latency">${n.status && n.status.latency_ms != null ? n.status.latency_ms + ' ms' : '—'}</span>
