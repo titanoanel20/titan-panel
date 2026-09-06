@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import APP_NAME, APP_VERSION, config, db, security, state, xray
+from . import nodes as nodesync
 from . import tasks as bg
 from .colo_map import describe_colo
 from .geo import detect_location, flag_from_code
@@ -100,6 +101,33 @@ def _link_port(settings: dict) -> int:
     except (TypeError, ValueError):
         port = 443
     return port if 1 <= port <= 65535 else 443
+
+
+def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
+    """The (host, port) a user's connection link should point at.
+
+    - On a node, every user is proxied by this process, so the link points at
+      the node's own public host.
+    - On the main panel, a user assigned to a remote node gets a link pointing
+      at that node's address; otherwise it points at the main panel.
+    """
+    settings = db.get_settings()
+    if config.IS_NODE:
+        return _public_host(request), _link_port(settings)
+    node = db.get_node(int(u.get("node_id") or 1)) if u.get("node_id") else None
+    if node and not node.get("is_local") and (node.get("address") or "").strip():
+        host = node["address"].strip()
+        host = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", host)
+        host = host.split("/", 1)[0].rsplit("@", 1)[-1].strip()
+        port = _link_port(settings)
+        if ":" in host:
+            name, p = host.rsplit(":", 1)
+            if p.isdigit():
+                host, port = name, int(p)
+        host = host.strip("[]")
+        if host:
+            return host, port
+    return _public_host(request), _link_port(settings)
 
 
 def _set_session(response: Response, username: str, remember: bool = False):
@@ -170,12 +198,13 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
     out["avatar_url"] = _resolve_avatar(u.get("avatar") or "")["url"]
     if with_links and request is not None:
         settings = db.get_settings()
-        links = build_links(_public_host(request), _link_port(settings), u, settings)
-        host = _public_host(request)
+        host, port = _user_endpoint(u, request)
+        links = build_links(host, port, u, settings)
+        panel_host = _public_host(request)
         out["links"] = links["all"]
         out["main_link"] = links["main"]
-        out["sub_url"] = f"https://{host}/sub/{u['uid']}"
-        out["status_url"] = f"https://{host}/status/{u['uid']}"
+        out["sub_url"] = f"https://{panel_host}/sub/{u['uid']}"
+        out["status_url"] = f"https://{panel_host}/status/{u['uid']}"
         out["qr_data"] = links["main"]
     return out
 
@@ -653,6 +682,7 @@ async def api_create_user(request: Request, _: str = Depends(_require_auth)):
     }
     user = db.create_user(data)
     _reload_xray()
+    _trigger_node_sync()
     db.add_event("info", "user-create", f"{user['name']} ({protocol})", ip=_client_ip(request))
     return {"ok": True, "user": _serialize_user(user, with_links=True, request=request)}
 
@@ -697,6 +727,7 @@ async def api_update_user(uid: str, request: Request, _: str = Depends(_require_
         fields["expire_at"] = _expire_from_days(payload.get("expire_days"))
     updated = db.update_user(uid, fields)
     _reload_xray()
+    _trigger_node_sync()
     db.add_event("info", "user-update", f"{uid}", ip=_client_ip(request))
     return {"ok": True, "user": _serialize_user(updated, with_links=True, request=request)}
 
@@ -707,6 +738,7 @@ async def api_delete_user(uid: str, request: Request, _: str = Depends(_require_
         raise HTTPException(404, "not-found")
     state.ACTIVE.pop(uid, None)
     _reload_xray()
+    _trigger_node_sync()
     db.add_event("warn", "user-delete", f"{uid}", ip=_client_ip(request))
     return {"ok": True}
 
@@ -727,6 +759,7 @@ async def api_regenerate(uid: str, request: Request, _: str = Depends(_require_a
     db.update_user(uid, {"uuid": str(uuid_lib.uuid4())})
     state.ACTIVE.pop(uid, None)
     _reload_xray()
+    _trigger_node_sync()
     db.add_event("warn", "uuid-rotate", f"{uid}", ip=_client_ip(request))
     return {"ok": True, "user": _serialize_user(db.get_user(uid), with_links=True, request=request)}
 
@@ -739,6 +772,7 @@ async def api_toggle(uid: str, request: Request, _: str = Depends(_require_auth)
     new_state = not bool(user["enabled"])
     db.update_user(uid, {"enabled": new_state})
     _reload_xray()
+    _trigger_node_sync()
     db.add_event("info", "user-toggle", f"{uid} -> {new_state}", ip=_client_ip(request))
     return {"ok": True, "enabled": new_state}
 
@@ -757,7 +791,8 @@ async def api_user_qr(uid: str, request: Request, _: str = Depends(_require_auth
     if not user:
         raise HTTPException(404, "not-found")
     settings = db.get_settings()
-    link = build_links(_public_host(request), _link_port(settings), user, settings)["main"]
+    host, port = _user_endpoint(user, request)
+    link = build_links(host, port, user, settings)["main"]
     img = qrcode.make(link, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -794,6 +829,16 @@ def _reload_xray():
     try:
         xray.write_xray_config()
         xray.restart_xray()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _trigger_node_sync():
+    """Push user changes to remote nodes without blocking the request."""
+    if not config.NODE_SECRET:
+        return
+    try:
+        asyncio.create_task(nodesync.sync_all())
     except Exception:  # noqa: BLE001
         pass
 
@@ -943,6 +988,62 @@ async def api_admin_info(_: str = Depends(_require_auth)):
     }
 
 
+# ------------------------------------------------------------------ node coordination
+@app.post("/api/node/sync")
+async def api_node_sync(request: Request):
+    """Node side: receive the full list of users assigned to this node and
+    reconcile the local database + Xray config to match. Secret protected."""
+    payload = await request.json()
+    if not nodesync.secret_ok(payload.get("secret")):
+        raise HTTPException(401, "bad-secret")
+    users = payload.get("users") or []
+    seen: set[str] = set()
+    for data in users:
+        uid = (data.get("uid") or "").strip()
+        if not uid or not data.get("uuid"):
+            continue
+        seen.add(uid)
+        fields = {k: data.get(k) for k in nodesync.SYNC_FIELDS if data.get(k) is not None}
+        fields["uuid"] = data["uuid"]
+        existing = db.get_user(uid)
+        if existing:
+            db.update_user(uid, fields)
+        else:
+            db.create_user({
+                **fields,
+                "uid": uid,
+                "node_id": 1,  # every synced user is local to this node
+                "created_at": time.time(),
+            })
+    # drop users that are no longer assigned to this node
+    for u in db.list_users():
+        if u["uid"] not in seen:
+            db.delete_user(u["uid"])
+            state.ACTIVE.pop(u["uid"], None)
+    _reload_xray()
+    return {"ok": True, "count": len(seen)}
+
+
+@app.post("/api/node/usage")
+async def api_node_usage(request: Request):
+    """Main side: receive traffic deltas reported by a node and merge them."""
+    payload = await request.json()
+    if not nodesync.secret_ok(payload.get("secret")):
+        raise HTTPException(401, "bad-secret")
+    usage = payload.get("usage") or {}
+    count = 0
+    for uid, d in usage.items():
+        if not isinstance(d, dict):
+            continue
+        up = max(0, int(d.get("up") or 0))
+        down = max(0, int(d.get("down") or 0))
+        if up or down:
+            db.add_user_usage(uid, up, down)
+            db.touch_last_seen(uid)
+            count += 1
+    return {"ok": True, "merged": count}
+
+
 # ------------------------------------------------------------------ subscriptions
 @app.get("/sub/{uid}")
 async def sub_plain(uid: str, request: Request):
@@ -950,7 +1051,8 @@ async def sub_plain(uid: str, request: Request):
     if not user:
         raise HTTPException(404, "not-found")
     settings = db.get_settings()
-    links = build_links(_public_host(request), _link_port(settings), user, settings)
+    host, port = _user_endpoint(user, request)
+    links = build_links(host, port, user, settings)
     combined = [c["link"] for c in links["info"]] + links["all"]
     body = subscription_text(combined)
     headers = _sub_headers(user)
@@ -963,7 +1065,8 @@ async def sub_json(uid: str, request: Request):
     if not user:
         raise HTTPException(404, "not-found")
     settings = db.get_settings()
-    links = build_links(_public_host(request), _link_port(settings), user, settings)
+    host, port = _user_endpoint(user, request)
+    links = build_links(host, port, user, settings)
     st = _user_status(user)
     return JSONResponse({
         "name": user["name"],
@@ -985,7 +1088,8 @@ async def sub_base64(uid: str, request: Request):
     if not user:
         raise HTTPException(404, "not-found")
     settings = db.get_settings()
-    links = build_links(_public_host(request), _link_port(settings), user, settings)
+    host, port = _user_endpoint(user, request)
+    links = build_links(host, port, user, settings)
     combined = [c["link"] for c in links["info"]] + links["all"]
     return PlainTextResponse(subscription_text(combined), headers=_sub_headers(user))
 

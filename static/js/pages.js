@@ -569,11 +569,15 @@
   }
 
   async function openUserForm(u) {
-    const settings = await U.apiJson('/api/settings');
+    const [settings, nodesRes] = await Promise.all([
+      U.apiJson('/api/settings'),
+      U.apiJson('/api/nodes').catch(() => ({ nodes: [] })),
+    ]);
+    const nodes = nodesRes.nodes || [];
     const m = U.modal({
       title: I18N.t(u ? 'edit' : 'add_user'),
       lg: true,
-      body: `<form id="userForm">${userFields(u, settings, null)}</form>`,
+      body: `<form id="userForm">${userFields(u, settings, nodes)}</form>`,
       foot: `<button class="btn" data-close>${I18N.t('cancel')}</button>
              <button class="btn primary" id="saveUserBtn">${I18N.t('save')}</button>`,
     });

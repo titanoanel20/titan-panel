@@ -15,9 +15,13 @@ log = logging.getLogger("titan.tasks")
 # cached Cloudflare colo for the location widget
 LOCATION: dict = {"colo": "?"}
 
+# usage deltas waiting to be reported back to the main panel (node role)
+_pending_usage: dict[str, dict] = {}
+
 
 async def _periodic_flush():
     """Every 5s pull Xray deltas and add them to each user's usage."""
+    global _pending_usage
     while True:
         try:
             await asyncio.sleep(5)
@@ -25,12 +29,20 @@ async def _periodic_flush():
             if deltas:
                 total_up = total_down = 0
                 for uid, d in deltas.items():
-                    db.add_user_usage(uid, d.get("up", 0), d.get("down", 0))
+                    up, down = d.get("up", 0), d.get("down", 0)
+                    db.add_user_usage(uid, up, down)
                     db.touch_last_seen(uid)
                     state.LAST_TRAFFIC[uid] = time.time()
-                    total_up += d.get("up", 0)
-                    total_down += d.get("down", 0)
-                    _check_quota(uid)
+                    total_up += up
+                    total_down += down
+                    if config.IS_NODE:
+                        # report back to the main panel instead of enforcing
+                        # quotas locally (the main panel is the authority)
+                        p = _pending_usage.setdefault(uid, {"up": 0, "down": 0})
+                        p["up"] += up
+                        p["down"] += down
+                    else:
+                        _check_quota(uid)
                 db.add_traffic(int(time.time() // 3600) * 3600, total_up, total_down)
         except asyncio.CancelledError:
             break
@@ -177,6 +189,43 @@ def start_background_tasks(app):
         asyncio.create_task(_keep_alive()),
         asyncio.create_task(_refresh_location()),
         asyncio.create_task(_enrich_node_locations()),
+        asyncio.create_task(_sync_nodes_loop()),
+        asyncio.create_task(_report_usage_loop()),
     ]
     app.state.titan_tasks = tasks
     return tasks
+
+
+async def _sync_nodes_loop():
+    """Main role: re-push users to remote nodes on an interval (self-healing)."""
+    if config.IS_NODE or not config.NODE_SECRET:
+        return
+    await asyncio.sleep(10)
+    while True:
+        try:
+            await asyncio.sleep(config.NODE_SYNC_INTERVAL)
+            from . import nodes as nodesync
+            await nodesync.sync_all()
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(15)
+
+
+async def _report_usage_loop():
+    """Node role: periodically send usage deltas back to the main panel."""
+    global _pending_usage
+    if not config.IS_NODE or not config.MAIN_URL or not config.NODE_SECRET:
+        return
+    await asyncio.sleep(20)
+    while True:
+        try:
+            await asyncio.sleep(30)
+            if _pending_usage:
+                from . import nodes as nodesync
+                snapshot, _pending_usage = _pending_usage, {}
+                await nodesync.report_usage(snapshot)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(10)

@@ -290,7 +290,7 @@ def update_user(uid: str, fields: dict) -> dict | None:
         "name", "note", "enabled", "protocol", "transport", "security",
         "fingerprint", "alpn", "public_key", "short_id", "spider_x",
         "max_devices", "first_device_uid", "quota_bytes", "expire_at",
-        "max_requests", "node_id", "avatar",
+        "max_requests", "node_id", "avatar", "uuid",
     }
     with _lock:
         c = _connect()

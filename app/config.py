@@ -34,6 +34,24 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 LOGIN_MAX_ATTEMPTS = 8
 LOGIN_LOCK_SECONDS = 10 * 60  # 10 minutes
 
+# ------------------------------------------------------------------ multi-node
+# TITAN_ROLE=main  -> the control panel (dashboard + DB). Syncs users to nodes.
+# TITAN_ROLE=node  -> a pure proxy node: runs Xray for the users the main panel
+#                     assigns to it and reports their usage back.
+ROLE = os.environ.get("TITAN_ROLE", "main").strip().lower() or "main"
+IS_NODE = ROLE == "node"
+
+# Shared secret that lets the main panel talk to its nodes (and vice versa).
+# Must be identical on every service. If empty, node sync is disabled.
+NODE_SECRET = os.environ.get("TITAN_NODE_SECRET", "")
+
+# On a node: the public URL of the main panel, e.g. https://panel.example.com
+MAIN_URL = os.environ.get("TITAN_MAIN_URL", "").strip().rstrip("/")
+
+# How often (seconds) the main panel re-pushes users to its nodes.
+NODE_SYNC_INTERVAL = int(os.environ.get("TITAN_NODE_SYNC_INTERVAL", "60"))
+
+
 # Default settings for newly created users / generated links.
 DEFAULT_SETTINGS = {
     "lang": "fa",

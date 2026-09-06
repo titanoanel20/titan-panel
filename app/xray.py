@@ -51,9 +51,23 @@ def _blocked_rules(settings: dict) -> list:
     return rules
 
 
+def _xray_users() -> list[dict]:
+    """Users whose traffic this process must proxy.
+
+    On the main panel only users assigned to the *local* node are proxied here;
+    every other user is proxied by their remote node. On a node, every user in
+    the (synced) database is proxied locally.
+    """
+    users = db.list_users()
+    if config.IS_NODE:
+        return users
+    local_ids = {n["id"] for n in db.list_nodes() if n.get("is_local")}
+    return [u for u in users if int(u.get("node_id") or 1) in local_ids]
+
+
 def generate_xray_config() -> dict:
     """Build the full Xray config dict. Persisted to disk by write_xray_config."""
-    users = db.list_users()
+    users = _xray_users()
     settings = db.get_settings()
 
     def mk_client(u):
