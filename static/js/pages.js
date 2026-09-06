@@ -741,8 +741,13 @@
       }
     });
     $('#newConfigBtn').addEventListener('click', async () => {
-      const n = await U.apiJson('/api/nodes');
-      openConfigWizard(null, n.nodes || []);
+      // reuse the node list already loaded for this page (avoids a second
+      // /api/nodes round-trip and its status probes); fall back to fetching.
+      let list = nodes;
+      if (!list.length) {
+        try { list = (await U.apiJson('/api/nodes')).nodes || []; } catch (_) { list = []; }
+      }
+      openConfigWizard(null, list);
     });
     await load();
     I18N.apply();

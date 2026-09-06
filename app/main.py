@@ -283,6 +283,11 @@ def _flag_for(code: str) -> str:
 
 # ------------------------------------------------------------------ node status service
 _node_status_cache: dict = {}
+# local node's measured internet latency (1.1.1.1:443), cached to avoid
+# blocking /api/nodes on a TCP probe every 30s
+_local_inet_latency: dict = {"ts": 0.0, "ms": None}
+_LOCAL_LATENCY_TTL = 60.0
+_REMOTE_PROBE_TIMEOUT = 2.0
 
 
 async def _tcp_latency(host: str, port: int, timeout: float = 2.0) -> int | None:
@@ -302,8 +307,20 @@ async def _tcp_latency(host: str, port: int, timeout: float = 2.0) -> int | None
         return None
 
 
+async def _local_latency() -> int | None:
+    """Internet latency of this process, re-probed at most every 60s."""
+    now = time.time()
+    if now - _local_inet_latency["ts"] < _LOCAL_LATENCY_TTL:
+        return _local_inet_latency["ms"]
+    ms = await _tcp_latency("1.1.1.1", 443, timeout=1.5)
+    _local_inet_latency.update(ts=now, ms=ms)
+    return ms
+
+
 async def _node_status(node: dict) -> dict:
-    """Compute live status for a node. Cached for 30s."""
+    """Compute live status for a node. Cached for 30s. Remote nodes are probed
+    with a short timeout; callers should run these concurrently (gather) so a
+    dead node never blocks the response for 2s × N."""
     now = time.time()
     cached = _node_status_cache.get(node["id"])
     if cached and now - cached["ts"] < 30:
@@ -315,13 +332,13 @@ async def _node_status(node: dict) -> dict:
         data["cpu"] = psutil.cpu_percent(interval=0.1)
         data["ram"] = psutil.virtual_memory().percent
         data["disk"] = psutil.disk_usage(config.DATA_DIR).percent
-        data["latency_ms"] = await _tcp_latency("1.1.1.1", 443)
+        data["latency_ms"] = await _local_latency()
     else:
         addr = (node.get("address") or "").strip()
         if addr:
             url = addr if addr.startswith(("http://", "https://")) else "http://" + addr
             try:
-                async with httpx.AsyncClient(timeout=3, follow_redirects=True) as cl:
+                async with httpx.AsyncClient(timeout=_REMOTE_PROBE_TIMEOUT, follow_redirects=True) as cl:
                     t0 = time.time()
                     r = await cl.get(url.rstrip("/") + "/health")
                     lat = (time.time() - t0) * 1000
@@ -1027,10 +1044,11 @@ def _ensure_wg_user(u: dict) -> dict:
 # ------------------------------------------------------------------ nodes api
 @app.get("/api/nodes")
 async def api_list_nodes(_: str = Depends(_require_auth)):
-    nodes = []
-    for n in db.list_nodes():
-        nodes.append(_serialize_node(n, await _node_status(n)))
-    return {"nodes": nodes}
+    db_nodes = db.list_nodes()
+    # probe every node concurrently so a dead/slow node never serializes the
+    # response (this endpoint feeds the dashboard, users and config pages)
+    statuses = await asyncio.gather(*[_node_status(n) for n in db_nodes])
+    return {"nodes": [_serialize_node(n, s) for n, s in zip(db_nodes, statuses)]}
 
 
 @app.post("/api/nodes")

@@ -250,8 +250,8 @@ async def _refresh_node_latencies():
                 if not n.get("is_local") and n.get("enabled")
                 and (n.get("address") or "").strip()
             ]
-            for n in nodes:
-                await m._node_status(n)
+            if nodes:
+                await asyncio.gather(*[m._node_status(n) for n in nodes])
         except asyncio.CancelledError:
             break
         except Exception:  # noqa: BLE001
