@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#020812">
+  <title>TiTaN — داشبورد</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/emblem.svg">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+  <div class="app" id="appShell">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="logo-box logo-titan">
+          <svg viewBox="0 0 64 64" fill="none">
+            <defs>
+              <linearGradient id="titanLogoGradient" x1="8" y1="6" x2="56" y2="58">
+                <stop offset="0%" stop-color="#b08cff"/>
+                <stop offset="45%" stop-color="#7541ef"/>
+                <stop offset="100%" stop-color="#4320b5"/>
+              </linearGradient>
+              <filter id="titanGlow">
+                <feGaussianBlur stdDeviation="2.5" result="blur"/>
+                <feMerge>
+                  <feMergeNode in="blur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+            <path d="M32 4L57 17V46L32 60L7 46V17L32 4Z" fill="url(#titanLogoGradient)" fill-opacity=".18" stroke="#8D62FF" stroke-width="2" filter="url(#titanGlow)"/>
+            <path d="M7 17L32 30L57 17" stroke="#A984FF" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M32 30V60" stroke="#8D62FF" stroke-width="2"/>
+            <path d="M17 21L32 14L47 21L42 24L35 21V45L29 48V24L22 27L17 24V21Z" fill="#E4D9FF"/>
+            <path d="M17 24V39L29 46" stroke="#D8C8FF" stroke-width="1.5"/>
+            <path d="M47 24V39L35 46" stroke="#8B5DFF" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div class="brand-name">TiTaN</div>
+      </div>
+
+      <nav class="menu" id="sidebarNav" aria-label="Navigation"></nav>
+
+      <div class="sidebar-bottom" id="sidebarFoot"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="m20 20-4-4"/>
+          </svg>
+          <input class="search-input" id="globalSearch" type="text" placeholder="جستجو..." aria-label="Search">
+          <span class="search-shortcut">Ctrl + K</span>
+        </div>
+
+        <div class="header-right">
+          <div class="header-top-row">
+            <div class="profile">
+              <div class="profile-text">
+                <div class="profile-name">مدیر</div>
+                <div class="profile-role">
+                  ادمین کل
+                  <span class="online-dot"></span>
+                </div>
+              </div>
+              <div class="avatar">
+                <svg viewBox="0 0 100 100">
+                  <defs>
+                    <linearGradient id="avbg" x1="0" x2="1">
+                      <stop offset="0%" stop-color="#1c2735"/>
+                      <stop offset="100%" stop-color="#101722"/>
+                    </linearGradient>
+                  </defs>
+                  <rect width="100" height="100" fill="url(#avbg)"/>
+                  <circle cx="50" cy="39" r="18" fill="#c38d70"/>
+                  <path d="M31 40c0-17 8-27 20-27 13 0 21 10 21 27-4-6-8-9-12-10-6 5-16 6-29 10z" fill="#171a20"/>
+                  <path d="M29 90c4-22 15-32 21-32s19 9 22 32" fill="#111a27"/>
+                </svg>
+              </div>
+            </div>
+
+            <div class="header-icons">
+              <button class="header-icon" id="bellBtn" aria-label="Notifications" title="Notifications">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+                  <path d="M10 21h4"/>
+                </svg>
+              </button>
+              <button class="header-icon" id="statusBtn" aria-label="System status" title="System">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M12 3a9 9 0 1 0 9 9"/>
+                  <path d="M12 3v4"/>
+                </svg>
+              </button>
+              <button class="header-icon" aria-label="Messages" title="Messages">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.5-5A8 8 0 1 1 21 15z"/>
+                  <circle cx="9" cy="11" r="1"/>
+                  <circle cx="13" cy="11" r="1"/>
+                </svg>
+                <span class="red-dot"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="welcome">
+            <h1 data-i18n="welcome_title">خوش آمدید، مدیر</h1>
+            <p data-i18n="welcome_sub">نمای کلی سیستم TiTaN</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="content" id="view"></div>
+    </main>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script src="/static/js/i18n.js"></script>
+  <script src="/static/js/ui.js"></script>
+  <script src="/static/js/pages.js"></script>
+  <script>
+    (async function init() {
+      try {
+        const me = await UI.apiJson('/api/me');
+        if (!me || !me.logged_in) { location.href = '/login'; return; }
+        const theme = (me.settings && me.settings.theme) || 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+        UI.boot();
+      } catch (e) { location.href = '/login'; }
+    })();
+  </script>
+</body>
+</html>

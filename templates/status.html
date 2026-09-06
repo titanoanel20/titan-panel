@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#05050f">
+  <title>وضعیت سرویس — TiTaN</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/emblem.svg">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    /* page-specific centering for the public status view */
+    .status-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .status-card { width: 100%; max-width: 420px; }
+    .status-head { text-align: center; margin-bottom: 18px; }
+    .status-head img { width: 72px; height: 72px; border-radius: 18px; box-shadow: 0 0 34px rgba(168, 85, 247, 0.5); }
+    .ring {
+      --p: 0;
+      width: 148px; height: 148px; border-radius: 50%;
+      background: conic-gradient(#a855f7 calc(var(--p) * 1%), rgba(168, 130, 255, 0.12) 0);
+      display: flex; align-items: center; justify-content: center;
+      margin: 4px auto 18px;
+      box-shadow: 0 0 40px rgba(168, 85, 247, 0.25);
+    }
+    .ring .inner {
+      width: 116px; height: 116px; border-radius: 50%;
+      background: #0f0e1c;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-weight: 800; gap: 2px;
+    }
+    .ring .inner .pct { font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <main class="status-page">
+    <div class="status-card">
+      <div class="status-head">
+        <img src="/static/img/emblem.svg" alt="TiTaN">
+        <h1 style="margin:14px 0 2px;font-size:1.5rem;font-weight:800">TiTaN</h1>
+        <div class="page-sub" data-i18n="service_status">وضعیت سرویس</div>
+        <div class="cell-sub" id="subName" style="margin-top:6px">…</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-body" style="text-align:center">
+          <div class="ring" id="quotaRing">
+            <div class="inner">
+              <div class="pct" id="pct">—</div>
+              <div class="cell-sub" data-i18n="used">مصرف</div>
+            </div>
+          </div>
+          <div class="row" style="justify-content:center;margin-bottom:14px">
+            <span class="badge" id="stateBadge"><span class="dot"></span><span id="stateTxt">…</span></span>
+          </div>
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+            <div class="stat-card"><div class="stat-label" data-i18n="volume_used"></div><div class="stat-value" style="font-size:1.2rem" id="usedGb">—</div></div>
+            <div class="stat-card"><div class="stat-label" data-i18n="days_left"></div><div class="stat-value" style="font-size:1.2rem" id="daysLeft">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <p class="cell-sub" style="text-align:center;margin-top:16px">{{ panel }} Panel — v{{ app_version }}</p>
+    </div>
+  </main>
+
+  <script src="/static/js/i18n.js"></script>
+  <script>
+    I18N.apply();
+    const uid = "{{ uid }}";
+    async function load() {
+      try {
+        const r = await fetch('/api/status/' + uid);
+        if (!r.ok) throw new Error();
+        const d = await r.json();
+        document.getElementById('subName').textContent = d.name;
+        document.getElementById('usedGb').textContent = d.used_gb + ' GB';
+        document.getElementById('daysLeft').textContent = (d.days_left === null || d.days_left === undefined) ? '∞' : d.days_left;
+        const total = d.quota_gb || 0;
+        const p = total > 0 ? Math.min(100, (d.used_gb / total) * 100) : 0;
+        document.getElementById('quotaRing').style.setProperty('--p', p);
+        document.getElementById('pct').textContent = total > 0 ? Math.round(p) + '%' : d.used_gb + 'GB';
+        const badge = document.getElementById('stateBadge');
+        const txt = document.getElementById('stateTxt');
+        badge.className = 'badge ' + (d.enabled ? 'ok' : 'bad');
+        txt.textContent = I18N.t(d.enabled ? 'active' : 'disabled');
+      } catch (_) {}
+    }
+    load();
+    setInterval(load, 20000);
+  </script>
+</body>
+</html>

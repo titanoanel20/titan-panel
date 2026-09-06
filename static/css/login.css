@@ -1,0 +1,1832 @@
+/* ============================================================
+   TiTaN LOGIN
+   Desktop reference layout
+============================================================ */
+
+
+:root {
+
+    --purple:
+        #6324ff;
+
+    --purple-light:
+        #914dff;
+
+    --purple-dark:
+        #4311cf;
+
+    --background:
+        #030307;
+
+    --card:
+        rgba(7, 8, 13, 0.975);
+
+    --text:
+        #f7f5fb;
+
+    --muted:
+        #777580;
+
+}
+
+
+/* ============================================================
+   RESET
+============================================================ */
+
+* {
+
+    box-sizing:
+        border-box;
+
+}
+
+
+html {
+
+    width:
+        100%;
+
+    height:
+        100%;
+
+}
+
+
+body {
+
+    width:
+        100%;
+
+    min-height:
+        100%;
+
+    margin:
+        0;
+
+    background:
+        #030307;
+
+    color:
+        var(--text);
+
+    font-family:
+        "Vazirmatn",
+        Tahoma,
+        Arial,
+        sans-serif;
+
+    overflow-x:
+        hidden;
+
+}
+
+
+/* ============================================================
+   PAGE
+============================================================ */
+
+.page {
+
+    position:
+        relative;
+
+    width:
+        100%;
+
+    min-height:
+        100vh;
+
+    min-height:
+        100svh;
+
+    overflow:
+        hidden;
+
+    background:
+        #030307;
+
+}
+
+
+/* ============================================================
+   FULL BACKGROUND
+============================================================ */
+
+.background {
+
+    position:
+        absolute;
+
+    inset:
+        0;
+
+    width:
+        100%;
+
+    height:
+        100%;
+
+    z-index:
+        0;
+
+    background-image:
+        url("/static/img/login-bg.jpg");
+
+    background-position:
+        center center;
+
+    background-repeat:
+        no-repeat;
+
+    background-size:
+        cover;
+
+}
+
+
+/*
+    این لایه بسیار کم‌رنگ است تا عمق تصویر
+    مرجع حفظ شود.
+*/
+
+.background-overlay {
+
+    position:
+        absolute;
+
+    inset:
+        0;
+
+    background:
+
+        linear-gradient(
+            90deg,
+            rgba(0,0,0,.03),
+            transparent 35%,
+            rgba(0,0,0,.03)
+        );
+
+    pointer-events:
+        none;
+
+}
+
+
+/*
+    نور بسیار نرم
+*/
+
+.background-glow {
+
+    position:
+        absolute;
+
+    width:
+        650px;
+
+    height:
+        650px;
+
+    right:
+        8%;
+
+    top:
+        20%;
+
+    border-radius:
+        50%;
+
+    background:
+        rgba(98, 29, 255, .07);
+
+    filter:
+        blur(110px);
+
+    pointer-events:
+        none;
+
+}
+
+
+/* ============================================================
+   LOGIN AREA
+============================================================ */
+
+.login-area {
+
+    position:
+        relative;
+
+    z-index:
+        5;
+
+    width:
+        100%;
+
+    min-height:
+        100vh;
+
+    min-height:
+        100svh;
+
+}
+
+
+/* ============================================================
+   DESKTOP LOGIN CARD
+============================================================ */
+
+/*
+    مختصات بر اساس تصویر 1536 × 1152
+
+    X ≈ 80px
+    Y ≈ 94px
+    W ≈ 607px
+    H ≈ 828px
+*/
+
+.login-card {
+
+    position:
+        absolute;
+
+    left:
+        clamp(
+            40px,
+            5.208vw,
+            100px
+        );
+
+    top:
+        clamp(
+            45px,
+            8.16vh,
+            100px
+        );
+
+    width:
+        clamp(
+            520px,
+            39.52vw,
+            607px
+        );
+
+    height:
+        clamp(
+            700px,
+            71.88vh,
+            828px
+        );
+
+    padding:
+        clamp(48px, 5.7vh, 76px)
+        clamp(35px, 3.13vw, 48px)
+        35px;
+
+    border:
+        1px solid
+        rgba(124, 117, 151, .28);
+
+    border-radius:
+        32px;
+
+    background:
+        rgba(7, 8, 13, .985);
+
+    box-shadow:
+
+        0 30px 90px
+        rgba(0,0,0,.58),
+
+        inset 0 1px 0
+        rgba(255,255,255,.025);
+
+    display:
+        flex;
+
+    flex-direction:
+        column;
+
+    overflow:
+        hidden;
+
+}
+
+
+/* ============================================================
+   BRAND
+============================================================ */
+
+.brand {
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    direction:
+        ltr;
+
+    gap:
+        clamp(12px, 1.17vw, 18px);
+
+    flex-shrink:
+        0;
+
+}
+
+
+.logo {
+
+    width:
+        clamp(60px, 5.08vw, 78px);
+
+    height:
+        clamp(60px, 5.08vw, 78px);
+
+    flex:
+        0 0 auto;
+
+    filter:
+        drop-shadow(
+            0 0 14px
+            rgba(111, 42, 255, .55)
+        );
+
+}
+
+
+.logo svg {
+
+    width:
+        100%;
+
+    height:
+        100%;
+
+    display:
+        block;
+
+}
+
+
+.brand-name {
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    font-size:
+        clamp(43px, 3.9vw, 60px);
+
+    line-height:
+        1;
+
+    font-weight:
+        700;
+
+    letter-spacing:
+        -3px;
+
+    color:
+        #f8f7fb;
+
+}
+
+
+.brand-name strong {
+
+    color:
+        #7832ff;
+
+    font-weight:
+        700;
+
+}
+
+
+/* ============================================================
+   WELCOME
+============================================================ */
+
+.welcome {
+
+    width:
+        100%;
+
+    text-align:
+        center;
+
+    margin-top:
+        clamp(22px, 2.6vh, 32px);
+
+}
+
+
+.welcome h1 {
+
+    margin:
+        0;
+
+    font-size:
+        clamp(22px, 1.9vw, 29px);
+
+    line-height:
+        1.8;
+
+    font-weight:
+        600;
+
+    white-space:
+        nowrap;
+
+}
+
+
+.welcome h1 span {
+
+    color:
+        #a063ff;
+
+}
+
+
+.welcome p {
+
+    margin:
+        5px 0 0;
+
+    color:
+        #7d7b86;
+
+    font-size:
+        clamp(12px, 1.04vw, 16px);
+
+    font-weight:
+        400;
+
+    white-space:
+        nowrap;
+
+}
+
+
+/* ============================================================
+   FORM
+============================================================ */
+
+.login-form {
+
+    width:
+        100%;
+
+    margin-top:
+        clamp(30px, 3.9vh, 45px);
+
+}
+
+
+/* ============================================================
+   INPUT
+============================================================ */
+
+.input-box {
+
+    position:
+        relative;
+
+    width:
+        100%;
+
+    height:
+        clamp(62px, 6.6vh, 76px);
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    direction:
+        ltr;
+
+    border:
+        1px solid
+        rgba(106, 38, 255, .76);
+
+    border-radius:
+        17px;
+
+    background:
+        rgba(3, 4, 8, .60);
+
+    box-shadow:
+        0 0 25px
+        rgba(83, 26, 255, .035);
+
+    transition:
+        border-color .2s ease,
+        box-shadow .2s ease;
+
+}
+
+
+.input-box:focus-within {
+
+    border-color:
+        #914dff;
+
+    box-shadow:
+
+        0 0 0 3px
+        rgba(103, 36, 255, .08),
+
+        0 0 28px
+        rgba(92, 31, 255, .10);
+
+}
+
+
+.user-icon {
+
+    width:
+        clamp(60px, 4.7vw, 72px);
+
+    height:
+        100%;
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    flex-shrink:
+        0;
+
+}
+
+
+.user-icon svg {
+
+    width:
+        clamp(26px, 2vw, 31px);
+
+    height:
+        clamp(26px, 2vw, 31px);
+
+    fill:
+        none;
+
+    stroke:
+        #aaa8b4;
+
+    stroke-width:
+        1.65;
+
+    stroke-linecap:
+        round;
+
+    stroke-linejoin:
+        round;
+
+}
+
+
+.input-line {
+
+    width:
+        1px;
+
+    height:
+        35px;
+
+    background:
+        rgba(255,255,255,.07);
+
+    flex-shrink:
+        0;
+
+}
+
+
+.input-box input {
+
+    flex:
+        1;
+
+    width:
+        100%;
+
+    height:
+        100%;
+
+    min-width:
+        0;
+
+    border:
+        0;
+
+    outline:
+        0;
+
+    background:
+        transparent;
+
+    color:
+        #fff;
+
+    direction:
+        rtl;
+
+    text-align:
+        right;
+
+    padding:
+        0 22px;
+
+    font-family:
+        "Vazirmatn",
+        Tahoma,
+        sans-serif;
+
+    font-size:
+        clamp(14px, 1.1vw, 17px);
+
+    font-weight:
+        500;
+
+}
+
+
+.input-box input::placeholder {
+
+    color:
+        #65636e;
+
+    opacity:
+        1;
+
+}
+
+
+/* ============================================================
+   LOGIN BUTTON
+============================================================ */
+
+.login-button {
+
+    position:
+        relative;
+
+    width:
+        100%;
+
+    height:
+        clamp(68px, 7.2vh, 83px);
+
+    margin-top:
+        clamp(20px, 2.6vh, 30px);
+
+    padding:
+        0;
+
+    border:
+        0;
+
+    border-radius:
+        17px;
+
+    background:
+
+        linear-gradient(
+            105deg,
+            #5520e8 0%,
+            #5e25f4 50%,
+            #6729f8 100%
+        );
+
+    color:
+        white;
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    gap:
+        clamp(25px, 2.2vw, 34px);
+
+    font-family:
+        "Vazirmatn",
+        Tahoma,
+        sans-serif;
+
+    font-size:
+        clamp(17px, 1.37vw, 21px);
+
+    font-weight:
+        600;
+
+    cursor:
+        pointer;
+
+    box-shadow:
+
+        0 12px 35px
+        rgba(84, 30, 232, .20),
+
+        inset 0 1px 0
+        rgba(255,255,255,.10);
+
+    transition:
+        transform .18s ease,
+        filter .18s ease,
+        box-shadow .18s ease;
+
+}
+
+
+.login-button:hover {
+
+    filter:
+        brightness(1.08);
+
+    transform:
+        translateY(-2px);
+
+    box-shadow:
+
+        0 17px 42px
+        rgba(84, 30, 232, .29),
+
+        inset 0 1px 0
+        rgba(255,255,255,.12);
+
+}
+
+
+.login-button:active {
+
+    transform:
+        translateY(0);
+
+}
+
+
+.login-button svg {
+
+    width:
+        clamp(25px, 2vw, 31px);
+
+    height:
+        clamp(25px, 2vw, 31px);
+
+    fill:
+        none;
+
+    stroke:
+        white;
+
+    stroke-width:
+        1.8;
+
+    stroke-linecap:
+        round;
+
+    stroke-linejoin:
+        round;
+
+}
+
+
+/* ============================================================
+   MESSAGE
+============================================================ */
+
+.message {
+
+    width:
+        100%;
+
+    min-height:
+        22px;
+
+    margin:
+        9px 0 0;
+
+    text-align:
+        center;
+
+    color:
+        #a367ff;
+
+    font-size:
+        12px;
+
+}
+
+
+/* ============================================================
+   QUICK ACCESS
+============================================================ */
+
+.quick-access {
+
+    width:
+        100%;
+
+    margin-top:
+        clamp(14px, 1.9vh, 22px);
+
+}
+
+
+/* ============================================================
+   QUICK TITLE
+============================================================ */
+
+.quick-heading {
+
+    width:
+        100%;
+
+    display:
+        grid;
+
+    grid-template-columns:
+        1fr auto 1fr;
+
+    align-items:
+        center;
+
+    gap:
+        20px;
+
+}
+
+
+.quick-heading span {
+
+    height:
+        1px;
+
+    background:
+        rgba(255,255,255,.075);
+
+}
+
+
+.quick-heading strong {
+
+    color:
+        #aaa8b2;
+
+    font-size:
+        clamp(13px, 1.05vw, 16px);
+
+    font-weight:
+        500;
+
+    white-space:
+        nowrap;
+
+}
+
+
+/* ============================================================
+   QUICK GRID
+============================================================ */
+
+.quick-grid {
+
+    width:
+        100%;
+
+    display:
+        grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap:
+        clamp(10px, 1.17vw, 18px);
+
+    margin-top:
+        clamp(18px, 2.4vh, 28px);
+
+}
+
+
+/* ============================================================
+   QUICK ITEM
+============================================================ */
+
+.quick-item {
+
+    min-width:
+        0;
+
+    min-height:
+        clamp(88px, 9vh, 104px);
+
+    padding:
+        14px 15px;
+
+    display:
+        flex;
+
+    flex-direction:
+        row;
+
+    align-items:
+        center;
+
+    gap:
+        13px;
+
+    text-decoration:
+        none;
+
+    border:
+        1px solid
+        rgba(104,102,119,.19);
+
+    border-radius:
+        16px;
+
+    background:
+        rgba(10,11,16,.74);
+
+    transition:
+        transform .2s ease,
+        border-color .2s ease,
+        background .2s ease;
+
+}
+
+
+.quick-item:hover {
+
+    transform:
+        translateY(-2px);
+
+    border-color:
+        rgba(108,48,255,.48);
+
+    background:
+        rgba(17,13,29,.82);
+
+}
+
+
+/* ============================================================
+   QUICK ICON
+============================================================ */
+
+.quick-icon {
+
+    width:
+        43px;
+
+    height:
+        43px;
+
+    flex:
+        0 0 43px;
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    color:
+        #7730ff;
+
+}
+
+
+.quick-icon svg {
+
+    width:
+        39px;
+
+    height:
+        39px;
+
+    fill:
+        currentColor;
+
+}
+
+
+.quick-icon.support svg {
+
+    fill:
+        none;
+
+    stroke:
+        currentColor;
+
+    stroke-width:
+        1.6;
+
+    stroke-linecap:
+        round;
+
+    stroke-linejoin:
+        round;
+
+}
+
+
+/* ============================================================
+   QUICK TEXT
+============================================================ */
+
+.quick-text {
+
+    min-width:
+        0;
+
+    direction:
+        rtl;
+
+}
+
+
+.quick-text b {
+
+    display:
+        block;
+
+    margin:
+        0 0 3px;
+
+    color:
+        #f1eff5;
+
+    font-size:
+        clamp(13px, 1.04vw, 16px);
+
+    font-weight:
+        600;
+
+}
+
+
+.quick-text small {
+
+    display:
+        block;
+
+    color:
+        #6f6d78;
+
+    font-size:
+        clamp(8px, .68vw, 10.5px);
+
+    line-height:
+        1.7;
+
+    white-space:
+        nowrap;
+
+}
+
+
+/* ============================================================
+   FOOTER
+============================================================ */
+
+.footer {
+
+    margin-top:
+        auto;
+
+    padding-top:
+        25px;
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    gap:
+        8px;
+
+    direction:
+        ltr;
+
+    color:
+        #4c4b55;
+
+    font-family:
+        Arial,
+        sans-serif;
+
+    font-size:
+        10px;
+
+    font-weight:
+        500;
+
+}
+
+
+.online-dot {
+
+    width:
+        6px;
+
+    height:
+        6px;
+
+    border-radius:
+        50%;
+
+    background:
+        #7935ff;
+
+    box-shadow:
+        0 0 10px
+        #7130ff;
+
+}
+
+
+.footer i {
+
+    font-style:
+        normal;
+
+    opacity:
+        .5;
+
+}
+
+
+/* ============================================================
+   LARGE DESKTOP
+============================================================ */
+
+@media (min-width: 1500px) {
+
+    .login-card {
+
+        left:
+            80px;
+
+        top:
+            94px;
+
+        width:
+            607px;
+
+        height:
+            828px;
+
+    }
+
+}
+
+
+/* ============================================================
+   LAPTOP
+============================================================ */
+
+@media (min-width: 701px) and (max-width: 1200px) {
+
+    .login-card {
+
+        left:
+            35px;
+
+        top:
+            50%;
+
+        transform:
+            translateY(-50%);
+
+        width:
+            min(530px, 46vw);
+
+        height:
+            min(760px, 88vh);
+
+        padding:
+            50px 35px 30px;
+
+    }
+
+
+    .brand-name {
+
+        font-size:
+            50px;
+
+    }
+
+
+    .welcome h1 {
+
+        font-size:
+            25px;
+
+    }
+
+}
+
+
+/* ============================================================
+   MOBILE
+============================================================ */
+
+@media (max-width: 700px) {
+
+
+    .page {
+
+        min-height:
+            100svh;
+
+        overflow-y:
+            auto;
+
+    }
+
+
+    .background {
+
+        position:
+            fixed;
+
+        background-position:
+            63% center;
+
+        background-size:
+            cover;
+
+    }
+
+
+    .background-overlay {
+
+        background:
+            rgba(2,2,7,.42);
+
+    }
+
+
+    .background-glow {
+
+        width:
+            90vw;
+
+        height:
+            90vw;
+
+        right:
+            -30vw;
+
+        top:
+            38%;
+
+        filter:
+            blur(80px);
+
+    }
+
+
+    .login-area {
+
+        min-height:
+            100svh;
+
+        min-height:
+            100dvh;
+
+        display:
+            flex;
+
+        align-items:
+            center;
+
+        justify-content:
+            center;
+
+        padding:
+            18px 12px;
+
+    }
+
+
+    .login-card {
+
+        position:
+            relative;
+
+        left:
+            auto;
+
+        top:
+            auto;
+
+        transform:
+            none;
+
+        width:
+            min(
+                100%,
+                510px
+            );
+
+        height:
+            auto;
+
+        min-height:
+            0;
+
+        padding:
+            38px 20px 25px;
+
+        border-radius:
+            24px;
+
+        background:
+            rgba(7,8,13,.965);
+
+    }
+
+
+    .brand {
+
+        gap:
+            10px;
+
+    }
+
+
+    .logo {
+
+        width:
+            57px;
+
+        height:
+            57px;
+
+    }
+
+
+    .brand-name {
+
+        font-size:
+            43px;
+
+        letter-spacing:
+            -2px;
+
+    }
+
+
+    .welcome {
+
+        margin-top:
+            23px;
+
+    }
+
+
+    .welcome h1 {
+
+        font-size:
+            21px;
+
+        white-space:
+            normal;
+
+    }
+
+
+    .welcome p {
+
+        font-size:
+            12px;
+
+        white-space:
+            normal;
+
+        line-height:
+            1.9;
+
+    }
+
+
+    .login-form {
+
+        margin-top:
+            30px;
+
+    }
+
+
+    .input-box {
+
+        height:
+            62px;
+
+        border-radius:
+            14px;
+
+    }
+
+
+    .user-icon {
+
+        width:
+            58px;
+
+    }
+
+
+    .user-icon svg {
+
+        width:
+            26px;
+
+        height:
+            26px;
+
+    }
+
+
+    .input-box input {
+
+        padding:
+            0 15px;
+
+        font-size:
+            14px;
+
+    }
+
+
+    .login-button {
+
+        height:
+            67px;
+
+        margin-top:
+            19px;
+
+        border-radius:
+            14px;
+
+        font-size:
+            17px;
+
+        gap:
+            23px;
+
+    }
+
+
+    .login-button svg {
+
+        width:
+            26px;
+
+        height:
+            26px;
+
+    }
+
+
+    .quick-access {
+
+        margin-top:
+            17px;
+
+    }
+
+
+    .quick-heading {
+
+        gap:
+            12px;
+
+    }
+
+
+    .quick-heading strong {
+
+        font-size:
+            13px;
+
+    }
+
+
+    .quick-grid {
+
+        gap:
+            10px;
+
+        margin-top:
+            19px;
+
+    }
+
+
+    .quick-item {
+
+        min-height:
+            91px;
+
+        padding:
+            11px 9px;
+
+        gap:
+            8px;
+
+        border-radius:
+            13px;
+
+    }
+
+
+    .quick-icon {
+
+        width:
+            34px;
+
+        height:
+            34px;
+
+        flex-basis:
+            34px;
+
+    }
+
+
+    .quick-icon svg {
+
+        width:
+            31px;
+
+        height:
+            31px;
+
+    }
+
+
+    .quick-text b {
+
+        font-size:
+            12px;
+
+    }
+
+
+    .quick-text small {
+
+        font-size:
+            8px;
+
+        white-space:
+            normal;
+
+        line-height:
+            1.6;
+
+    }
+
+
+    .footer {
+
+        padding-top:
+            23px;
+
+        font-size:
+            8px;
+
+    }
+
+}
+
+
+/* ============================================================
+   SMALL PHONES
+============================================================ */
+
+@media (max-width: 380px) {
+
+
+    .login-area {
+
+        padding:
+            10px 8px;
+
+    }
+
+
+    .login-card {
+
+        padding:
+            30px 16px 20px;
+
+    }
+
+
+    .brand-name {
+
+        font-size:
+            38px;
+
+    }
+
+
+    .logo {
+
+        width:
+            51px;
+
+        height:
+            51px;
+
+    }
+
+
+    .welcome h1 {
+
+        font-size:
+            19px;
+
+    }
+
+
+    .quick-item {
+
+        min-height:
+            85px;
+
+        padding:
+            9px 7px;
+
+    }
+
+
+    .quick-text b {
+
+        font-size:
+            11px;
+
+    }
+
+
+    .quick-text small {
+
+        font-size:
+            7px;
+
+    }
+
+}
+.message.error {
+    color: #ff5d76;
+}
+
+.message.success {
+    color: #9b63ff;
+}
+
+.message.normal {
+    color: #8b70ff;
+}
+
+.login-button:disabled {
+    cursor: wait;
+    opacity: .82;
+}
+
+.login-button.loading {
+    animation:
+        titanPulse
+        1.2s
+        ease-in-out
+        infinite;
+}
+
+@keyframes titanPulse {
+
+    0% {
+        box-shadow:
+            0 12px 35px
+            rgba(84,30,232,.20);
+    }
+
+    50% {
+        box-shadow:
+            0 12px 45px
+            rgba(105,38,255,.40);
+    }
+
+    100% {
+        box-shadow:
+            0 12px 35px
+            rgba(84,30,232,.20);
+    }
+
+}
+
+/* ============================================================
+   PASSWORD ROW — hidden unless a password is actually required
+   (revealed by login.js after /api/me reports default_auth:false)
+============================================================ */
+
+.password-row {
+    display: none;
+    margin-top: clamp(16px, 2vh, 24px);
+}
+
+.password-row.visible {
+    display: flex;
+}
+
+
+/* ============================================================
+   SHORT SCREENS & SMALL LAPTOPS
+   (no fixed height → the card never gets clipped; page scrolls)
+============================================================ */
+
+@media (max-height: 800px) and (min-width: 701px) {
+
+    .page {
+        overflow-y: auto;
+    }
+
+    .login-area {
+        display: flex;
+        min-height: 100svh;
+        padding: 24px 16px;
+    }
+
+    .login-card {
+        position: relative;
+        left: auto;
+        top: auto;
+        transform: none;
+        width: min(607px, 94vw);
+        height: auto;
+        min-height: 0;
+        margin: auto;
+    }
+}
+
+
+/* ============================================================
+   ANDROID / IOS SAFE CENTERING
+   margin:auto centers when the card fits and keeps it reachable
+   (scrollable from the top) when it is taller than the viewport.
+   Also prevents iOS focus auto-zoom with a 16px input font.
+============================================================ */
+
+@media (max-width: 700px) {
+
+    .login-area {
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-start;
+        min-height: 100svh;
+        min-height: 100dvh;
+        padding: 18px 12px;
+    }
+
+    .login-card {
+        margin: auto;
+    }
+
+    .input-box input {
+        font-size: 16px;
+    }
+}

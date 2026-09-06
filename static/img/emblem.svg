@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="TiTaN">
+  <defs>
+    <linearGradient id="titan-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c084fc"/>
+      <stop offset="0.5" stop-color="#a855f7"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="titan-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a855f7" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#4c1d95" stop-opacity="0.06"/>
+    </linearGradient>
+    <filter id="titan-glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="2.6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path d="M32 2.6 55.4 13.5v19c0 13.2-9.5 23.9-23.4 27.2C18.1 56.4 8.6 45.7 8.6 32.5v-19L32 2.6Z"
+        fill="url(#titan-fill)" stroke="url(#titan-grad)" stroke-width="2.4" filter="url(#titan-glow)"/>
+  <path d="M33.8 17h-4.6l-2.4 15h7l-1.6 12 10.6-15.6h-6.9l2.9-11.4Z"
+        fill="url(#titan-grad)" filter="url(#titan-glow)"/>
+</svg>

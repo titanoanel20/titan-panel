@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#030307">
+    <title>TiTaN | ورود به پنل</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png">
+    <link rel="stylesheet" href="/static/css/fonts.css">
+    <link rel="stylesheet" href="/static/css/login.css">
+</head>
+
+
+<body>
+
+
+<div class="page">
+
+
+    <!-- =====================================================
+         BACKGROUND
+    ====================================================== -->
+
+    <div
+        class="background"
+        aria-hidden="true"
+    >
+
+        <div class="background-overlay"></div>
+
+        <div class="background-glow"></div>
+
+    </div>
+
+
+
+    <!-- =====================================================
+         LOGIN AREA
+    ====================================================== -->
+
+    <main class="login-area">
+
+
+        <section class="login-card">
+
+
+            <!-- =================================================
+                 BRAND
+            ================================================== -->
+
+            <div class="brand">
+
+
+                <div class="logo">
+
+
+                    <svg
+                        viewBox="0 0 100 100"
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+
+                        <defs>
+
+                            <linearGradient
+                                id="logoGradient"
+                                x1="0"
+                                y1="0"
+                                x2="1"
+                                y2="1"
+                            >
+
+                                <stop
+                                    offset="0%"
+                                    stop-color="#9c54ff"
+                                />
+
+                                <stop
+                                    offset="55%"
+                                    stop-color="#6524ff"
+                                />
+
+                                <stop
+                                    offset="100%"
+                                    stop-color="#3c0bc7"
+                                />
+
+                            </linearGradient>
+
+                        </defs>
+
+
+                        <path
+                            d="M50 7L86 27V70L50 91L14 70V27L50 7Z"
+                            fill="none"
+                            stroke="url(#logoGradient)"
+                            stroke-width="6"
+                            stroke-linejoin="round"
+                        />
+
+
+                        <path
+                            d="M50 7V50"
+                            fill="none"
+                            stroke="url(#logoGradient)"
+                            stroke-width="5"
+                        />
+
+
+                        <path
+                            d="M14 27L50 50L86 27"
+                            fill="none"
+                            stroke="url(#logoGradient)"
+                            stroke-width="5"
+                            stroke-linejoin="round"
+                        />
+
+
+                        <path
+                            d="M50 50V91"
+                            fill="none"
+                            stroke="url(#logoGradient)"
+                            stroke-width="5"
+                        />
+
+
+                        <path
+                            d="M27 33L42 41V59L27 51V33Z"
+                            fill="none"
+                            stroke="#7831ff"
+                            stroke-width="5"
+                            stroke-linejoin="round"
+                        />
+
+
+                        <path
+                            d="M73 33L58 41V59L73 51V33Z"
+                            fill="none"
+                            stroke="#7831ff"
+                            stroke-width="5"
+                            stroke-linejoin="round"
+                        />
+
+                    </svg>
+
+
+                </div>
+
+
+                <div class="brand-name">
+
+                    <span>Ti</span><strong>TaN</strong>
+
+                </div>
+
+
+            </div>
+
+
+
+            <!-- =================================================
+                 WELCOME
+            ================================================== -->
+
+            <div class="welcome">
+
+
+                <h1>
+
+                    به
+                    <span>TiTaN</span>
+                    خوش آمدید
+
+                </h1>
+
+
+                <p>
+
+                    برای ورود به پنل، نام کاربری خود را وارد کنید
+
+                </p>
+
+
+            </div>
+
+
+
+            <!-- =================================================
+                 LOGIN FORM
+            ================================================== -->
+
+            <form
+                id="loginForm"
+                class="login-form"
+                autocomplete="off"
+            >
+
+
+                <div class="input-box">
+
+
+                    <div class="user-icon">
+
+
+                        <svg
+                            viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg"
+                        >
+
+                            <circle
+                                cx="12"
+                                cy="7"
+                                r="4"
+                            />
+
+                            <path
+                                d="M4 21C4.8 17.1 7.4 15 12 15C16.6 15 19.2 17.1 20 21"
+                            />
+
+                        </svg>
+
+
+                    </div>
+
+
+                    <div class="input-line"></div>
+
+
+                    <input
+                        id="username"
+                        name="username"
+                        type="text"
+                        placeholder="نام کاربری"
+                        autocomplete="username"
+                        spellcheck="false"
+                    >
+
+
+                </div>
+
+
+
+                <div class="input-box password-row" id="passwordRow">
+                    <div class="user-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="5" y="11" width="14" height="9" rx="2" />
+                            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+                        </svg>
+                    </div>
+                    <div class="input-line"></div>
+                    <input id="password" name="password" type="password" placeholder="رمز عبور" autocomplete="current-password" spellcheck="false">
+                </div>
+
+                <button
+                    id="loginButton"
+                    class="login-button"
+                    type="submit"
+                >
+
+
+                    <span>
+
+                        ورود
+
+                    </span>
+
+
+                    <svg
+                        viewBox="0 0 24 24"
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+
+                        <path
+                            d="M5 12H19"
+                        />
+
+                        <path
+                            d="M13 6L19 12L13 18"
+                        />
+
+                    </svg>
+
+
+                </button>
+
+
+                <div
+                    id="message"
+                    class="message"
+                ></div>
+
+
+            </form>
+
+
+
+            <!-- =================================================
+                 QUICK ACCESS
+            ================================================== -->
+
+            <div class="quick-access">
+
+
+                <div class="quick-heading">
+
+                    <span></span>
+
+                    <strong>
+                        دسترسی سریع
+                    </strong>
+
+                    <span></span>
+
+                </div>
+
+
+
+                <div class="quick-grid">
+
+
+                    <!-- Telegram -->
+
+                    <a
+                        class="quick-item"
+                        href="https://t.me/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+
+
+                        <div class="quick-icon telegram">
+
+
+                            <svg
+                                viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg"
+                            >
+
+                                <path
+                                    d="M21 4L17.8 20.1C17.6 21.1 17 21.4 16.1 20.9L11.4 17.4L9.1 19.6C8.8 19.9 8.5 20.2 8 20.2L8.3 15.4L17.3 7C17.7 6.6 17.2 6.4 16.7 6.8L6.1 13.5L1.5 12C0.5 11.7 0.5 11 1.7 10.6L19.6 3.7C20.5 3.4 21.3 3.6 21 4Z"
+                                />
+
+                            </svg>
+
+
+                        </div>
+
+
+                        <div class="quick-text">
+
+                            <b>
+                                چنل تلگرام
+                            </b>
+
+                            <small>
+                                به کانال رسمی ما بپیوندید
+                            </small>
+
+                        </div>
+
+
+                    </a>
+
+
+
+                    <!-- Support -->
+
+                    <a
+                        class="quick-item"
+                        href="https://t.me/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+
+
+                        <div class="quick-icon support">
+
+
+                            <svg
+                                viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg"
+                            >
+
+                                <path
+                                    d="M4 13V11C4 6.6 7.6 3 12 3C16.4 3 20 6.6 20 11V13"
+                                />
+
+                                <path
+                                    d="M4 13V17C4 18.1 4.9 19 6 19H8V11H6C4.9 11 4 11.9 4 13Z"
+                                />
+
+                                <path
+                                    d="M20 13V17C20 18.1 19.1 19 18 19H16V11H18C19.1 11 20 11.9 20 13Z"
+                                />
+
+                                <path
+                                    d="M20 17C20 19.2 18.2 21 16 21H14"
+                                />
+
+                            </svg>
+
+
+                        </div>
+
+
+                        <div class="quick-text">
+
+                            <b>
+                                پشتیبانی
+                            </b>
+
+                            <small>
+                                با تیم پشتیبانی در ارتباط باشید
+                            </small>
+
+                        </div>
+
+
+                    </a>
+
+
+                </div>
+
+
+            </div>
+
+
+
+            <!-- =================================================
+                 FOOTER
+            ================================================== -->
+
+            <footer class="footer">
+
+
+                <span class="online-dot"></span>
+
+
+                <span>
+                    TiTaN Panel
+                </span>
+
+
+                <i>•</i>
+
+
+                <span>
+                    Secure Access
+                </span>
+
+
+            </footer>
+
+
+        </section>
+
+
+    </main>
+
+
+</div>
+
+
+
+<script src="/static/js/login.js"></script>
+
+</body>
+
+</html>
