@@ -981,7 +981,14 @@ def _normalize_protocol_fields(protocol: str, transport, security) -> tuple[str,
     return t, s
 
 
-def _reload_xray():
+_reload_running = False
+_reload_wanted = 0
+
+
+def _do_reload():
+    """Rewrite the Xray config and restart Xray + WireGuard. Synchronous and
+    heavy (subprocess shutdown can take seconds), so it must never run inside
+    a request handler."""
     try:
         xray.write_xray_config()
         xray.restart_xray()
@@ -991,6 +998,38 @@ def _reload_xray():
         wg.restart()
     except Exception:  # noqa: BLE001
         pass
+
+
+def _reload_xray():
+    """Schedule a config reload in the background.
+
+    The response to a create/update/delete/toggle never depends on the new
+    Xray config (links are built from the DB), so we coalesce bursts and run
+    the heavy work off the request path. This keeps POST /api/users fast even
+    when Xray is slow to shut down.
+    """
+    global _reload_wanted, _reload_running
+    _reload_wanted += 1
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _reload_running:
+        return
+
+    async def _loop():
+        global _reload_running, _reload_wanted
+        _reload_running = True
+        try:
+            while _reload_wanted > 0:
+                _reload_wanted = 0
+                await asyncio.to_thread(_do_reload)
+                if _reload_wanted > 0:
+                    await asyncio.sleep(0.2)
+        finally:
+            _reload_running = False
+
+    loop.create_task(_loop())
 
 
 def _trigger_node_sync():
