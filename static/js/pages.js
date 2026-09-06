@@ -877,6 +877,13 @@
     function draw() {
       $('#nodesGrid').innerHTML = nodes.length ? nodes.map(n => {
         const st = n.status || {};
+        const sync = n.sync || {};
+        const syncLine = !n.is_local ? `
+          <div class="cell-sub" style="margin-bottom:10px">
+            <span data-i18n="node_sync_users"></span>: <b>${sync.on_node != null ? sync.on_node : '—'}</b> / ${sync.expected != null ? sync.expected : '—'}
+            ${!sync.has_credential ? `<span style="color:var(--red)"> · ${I18N.t('node_no_credential')}</span>` : ''}
+            ${sync.on_node != null && sync.on_node < sync.expected ? `<span style="color:var(--gold)"> · ${I18N.t('node_sync_lag')}</span>` : ''}
+          </div>` : '';
         return `<div class="node-card">
           <div class="n-head">
             <div class="n-flag">${flagHtml(n, 'flag-lg')}</div>
@@ -896,9 +903,11 @@
             <span class="cell-sub">${I18N.t('version')}: ${esc(n.version || '—')}</span>
             <span class="cell-sub">${I18N.t('last_seen')}: ${U.fmtDateTime(n.last_seen)}</span>
           </div>
+          ${syncLine}
           <div class="row" style="gap:8px;flex-wrap:wrap">
             <button class="btn sm" data-act="view" data-id="${n.id}">${ICONS.eye}<span data-i18n="node_view"></span></button>
             <button class="btn sm" data-act="ping" data-id="${n.id}">${ICONS.refresh}<span data-i18n="ping"></span></button>
+            ${!n.is_local ? `<button class="btn sm" data-act="sync" data-id="${n.id}">${ICONS.refresh}<span data-i18n="node_sync_now"></span></button>` : ''}
             <button class="btn sm" data-act="edit" data-id="${n.id}">${ICONS.edit}<span data-i18n="edit"></span></button>
             <button class="btn sm" data-act="toggle" data-id="${n.id}">${ICONS.power}<span data-i18n="maintenance"></span></button>
             ${!n.is_local ? `<button class="btn sm danger" data-act="delete" data-id="${n.id}">${ICONS.trash}</button>` : ''}
@@ -915,6 +924,15 @@
       const act = btn.dataset.act;
       if (act === 'view') openNodeView(node);
       else if (act === 'ping') { btn.disabled = true; try { await U.apiJson(`/api/nodes/${id}/ping`, { method: 'POST' }); await load(); } finally { btn.disabled = false; } }
+      else if (act === 'sync') {
+        btn.disabled = true;
+        try {
+          const r = await U.apiJson(`/api/nodes/${id}/sync`, { method: 'POST' });
+          U.toast(I18N.t('node_synced') + ' (' + r.pushed + ')', 'ok');
+          await load();
+        } catch (err) { U.toast(err.message, 'err'); }
+        finally { btn.disabled = false; }
+      }
       else if (act === 'edit') openNodeForm(node);
       else if (act === 'toggle') { await U.apiJson(`/api/nodes/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !node.enabled }) }); await load(); }
       else if (act === 'delete') {
@@ -924,6 +942,31 @@
     $('#addNodeBtn').addEventListener('click', () => openNodeForm(null));
     $('#autoNodeBtn').addEventListener('click', () => openNodeInvite());
     await load();
+  }
+
+  // Show the one-time credential for a manually-added node, so it can sync.
+  function showNodeToken(token, name) {
+    const origin = location.origin;
+    const varsText = () => `TITAN_ROLE=node\nTITAN_MAIN_URL=${origin}\nTITAN_NODE_TOKEN=${token}`;
+    const m = U.modal({
+      title: I18N.t('node_token_title') + ' — ' + esc(name || ''),
+      body: `
+        <div class="cell-sub" style="margin-bottom:12px" data-i18n="node_token_hint"></div>
+        <label class="field"><span class="field-label">TITAN_ROLE</span>
+          <input class="input" value="node" readonly dir="ltr"></label>
+        <label class="field"><span class="field-label">TITAN_MAIN_URL</span>
+          <div class="row" style="gap:8px"><input class="input grow" value="${esc(origin)}" readonly dir="ltr"><button class="btn sm" id="cMain">${I18N.t('copy')}</button></div></label>
+        <label class="field"><span class="field-label">TITAN_NODE_TOKEN</span>
+          <div class="row" style="gap:8px"><input class="input grow" value="${esc(token)}" readonly dir="ltr"><button class="btn sm" id="cTok">${I18N.t('copy')}</button></div></label>
+        <div class="row" style="gap:8px;margin-top:12px">
+          <button class="btn" id="cAll">${I18N.t('node_copy_all')}</button>
+        </div>`,
+      foot: `<button class="btn" data-close>${I18N.t('close')}</button>`,
+    });
+    m.query('#cMain').addEventListener('click', () => { U.copyText(origin); U.toast(I18N.t('copied'), 'ok'); });
+    m.query('#cTok').addEventListener('click', () => { U.copyText(token); U.toast(I18N.t('copied'), 'ok'); });
+    m.query('#cAll').addEventListener('click', () => { U.copyText(varsText()); U.toast(I18N.t('copied'), 'ok'); });
+    I18N.apply();
   }
 
   // Quick node setup: panel issues a token; the node self-registers with it.
@@ -1047,10 +1090,16 @@
         country: fd.get('country'), country_code: fd.get('country_code'), flag: fd.get('flag'),
       };
       try {
-        if (node) await U.apiJson(`/api/nodes/${node.id}`, { method: 'PATCH', body: JSON.stringify(body) });
-        else await U.apiJson('/api/nodes', { method: 'POST', body: JSON.stringify(body) });
-        U.closeModal();
-        U.toast(I18N.t(node ? 'node_updated' : 'node_created'), 'ok');
+        if (node) {
+          await U.apiJson(`/api/nodes/${node.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+          U.closeModal();
+          U.toast(I18N.t('node_updated'), 'ok');
+        } else {
+          const res = await U.apiJson('/api/nodes', { method: 'POST', body: JSON.stringify(body) });
+          U.closeModal();
+          U.toast(I18N.t('node_created'), 'ok');
+          if (res.token) showNodeToken(res.token, body.name);
+        }
         if (U.current === 'nodes') U.render();
       } catch (err) { U.toast(err.message, 'err'); }
     });

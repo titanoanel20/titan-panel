@@ -195,8 +195,27 @@ def _links_for(u: dict, request: Request | None) -> dict:
     u = _ensure_wg_user(u)
     settings = db.get_settings()
     host, port = _user_endpoint(u, request)
+    # A panel-wide sni_override (e.g. a CDN domain) only makes sense for the
+    # main panel's own TLS. A link that dials a remote node must present that
+    # node's SNI, so drop the override there.
+    if _user_is_remote(u):
+        settings = {**settings, "sni_override": ""}
     server_pub = _wg_server_pub(u) if u.get("protocol") == "wireguard" else ""
     return build_links(host, port, u, settings, server_pub=server_pub)
+
+
+def _user_is_remote(u: dict) -> bool:
+    """True when the user's traffic is served by a remote node (not this
+    process), i.e. the link must point at another host."""
+    if config.IS_NODE:
+        return False
+    nid = nodesync.user_node_id(u)
+    node = None
+    if nid == 0:
+        node = _auto_node()
+    elif u.get("node_id"):
+        node = db.get_node(nid)
+    return bool(node and not node.get("is_local"))
 
 
 def _set_session(response: Response, username: str, remember: bool = False):
@@ -326,13 +345,15 @@ async def _node_status(node: dict) -> dict:
     if cached and now - cached["ts"] < 30:
         return cached["data"]
 
-    data = {"online": False, "latency_ms": None, "cpu": None, "ram": None, "disk": None}
+    data = {"online": False, "latency_ms": None, "cpu": None, "ram": None, "disk": None,
+            "users_count": None}
     if node.get("is_local"):
         data["online"] = True
         data["cpu"] = psutil.cpu_percent(interval=0.1)
         data["ram"] = psutil.virtual_memory().percent
         data["disk"] = psutil.disk_usage(config.DATA_DIR).percent
         data["latency_ms"] = await _local_latency()
+        data["users_count"] = len(db.list_users())
     else:
         addr = (node.get("address") or "").strip()
         if addr:
@@ -344,12 +365,14 @@ async def _node_status(node: dict) -> dict:
                     lat = (time.time() - t0) * 1000
                 data["online"] = r.status_code in (200, 401, 404)
                 data["latency_ms"] = round(lat)
-                # learn the node's WireGuard public key for client configs
+                # learn the node's WireGuard public key + live user count
                 try:
                     body = r.json()
                     remote_pub = (body.get("wg_pub") or "").strip()
                     if remote_pub and remote_pub != (node.get("wg_pub") or ""):
                         db.update_node(node["id"], {"wg_pub": remote_pub})
+                    if isinstance(body.get("users"), int):
+                        data["users_count"] = body["users"]
                 except Exception:  # noqa: BLE001
                     pass
             except Exception:  # noqa: BLE001
@@ -364,6 +387,17 @@ def _serialize_node(node: dict, status: dict) -> dict:
     out.pop("token", None)  # never expose a node credential to the frontend
     out["status"] = status
     out["version"] = APP_VERSION if node.get("is_local") else None
+    if not node.get("is_local"):
+        # how many users this node should be serving vs how many it actually has
+        expected = sum(
+            1 for u in db.list_users()
+            if nodesync.user_node_id(u) in (node["id"], 0)
+        )
+        out["sync"] = {
+            "expected": expected,
+            "on_node": status.get("users_count"),
+            "has_credential": bool(node.get("token")) or bool(config.NODE_SECRET),
+        }
     return out
 
 
@@ -1102,6 +1136,9 @@ async def api_create_node(request: Request, _: str = Depends(_require_auth)):
     loc = {}
     if not cc and address:
         loc = await asyncio.to_thread(detect_location, address)
+    # Manual nodes also get a per-node token so sync works without a shared
+    # TITAN_NODE_SECRET; the token is returned once (never re-serialized).
+    token = secrets.token_hex(16)
     node = db.create_node({
         "name": name,
         "address": address,
@@ -1109,9 +1146,10 @@ async def api_create_node(request: Request, _: str = Depends(_require_auth)):
         "country": (payload.get("country") or loc.get("country") or "").strip()[:64],
         "country_code": cc or loc.get("country_code", ""),
         "flag": payload.get("flag") or _flag_for(cc or loc.get("country_code")),
+        "token": token,
     })
     db.add_event("info", "node-create", name, ip=_client_ip(request))
-    return {"ok": True, "node": _serialize_node(node, await _node_status(node))}
+    return {"ok": True, "node": _serialize_node(node, await _node_status(node)), "token": token}
 
 
 @app.patch("/api/nodes/{node_id}")
@@ -1156,6 +1194,24 @@ async def api_ping_node(node_id: int, _: str = Depends(_require_auth)):
     _node_status_cache.pop(node_id, None)
     db.touch_node(node_id)
     return {"ok": True, "status": await _node_status(node)}
+
+
+@app.post("/api/nodes/{node_id}/sync")
+async def api_sync_node_now(node_id: int, _: str = Depends(_require_auth)):
+    """Push this node's users to it immediately and report the result."""
+    node = db.get_node(node_id)
+    if not node or node.get("is_local"):
+        raise HTTPException(404, "not-found")
+    if not (node.get("token") or config.NODE_SECRET):
+        raise HTTPException(400, "no-credential")
+    users = db.list_users()
+    node_users = sorted(
+        [u for u in users if nodesync.user_node_id(u) in (node_id, 0)],
+        key=lambda x: x["uid"],
+    )
+    ok = await nodesync.sync_node(node, node_users)
+    _node_status_cache.pop(node_id, None)
+    return {"ok": ok, "pushed": len(node_users) if ok else 0}
 
 
 # ------------------------------------------------------------------ reports
@@ -1423,6 +1479,7 @@ async def health():
         "ts": time.time(),
         "version": APP_VERSION,
         "wg_pub": wg.server_public_key(),  # "" when WireGuard is unavailable
+        "users": len(db.list_users()),     # lets the main panel verify sync
     }
 
 
