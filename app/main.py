@@ -38,6 +38,7 @@ from . import APP_NAME, APP_VERSION, config, db, security, state, xray
 from . import nodes as nodesync
 from . import reality
 from . import tasks as bg
+from . import wg
 from .colo_map import describe_colo
 from .geo import detect_location, flag_from_code
 from .links import build_links, subscription_text
@@ -63,6 +64,12 @@ async def lifespan(app: FastAPI):
     try:
         xray.write_xray_config()
         xray.restart_xray()
+    except Exception:  # noqa: BLE001
+        pass
+    # WireGuard (optional): generate this node's keypair + start the server.
+    try:
+        wg.ensure_keys()
+        wg.restart()
     except Exception:  # noqa: BLE001
         pass
     bg.start_background_tasks(app)
@@ -133,16 +140,22 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
     - On a node, every user is proxied by this process, so the link points at
       the node's own public host.
     - On the main panel, a user assigned to a remote node gets a link pointing
-      at that node's address; otherwise it points at the main panel.
+      at that node's address; node_id=0 ("auto") resolves to the fastest node.
     - Raw-TCP users get the dedicated TCP port for their protocol/security.
+    - Hysteria2/WireGuard get their dedicated UDP ports.
     """
     settings = db.get_settings()
     host = None
     port = _link_port(settings)
+    nid = nodesync.user_node_id(u)
+    node = None
     if config.IS_NODE:
         host = _public_host(request)
     else:
-        node = db.get_node(int(u.get("node_id") or 1)) if u.get("node_id") else None
+        if nid == 0:
+            node = _auto_node()
+        elif u.get("node_id"):
+            node = db.get_node(nid)
         if node and not node.get("is_local") and (node.get("address") or "").strip():
             raw = node["address"].strip()
             raw = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", raw)
@@ -159,9 +172,15 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
     proto = (u.get("protocol") or "vless").lower()
     transport = (u.get("transport") or "ws").lower()
     sec = (u.get("security") or "none").lower()
-    if proto == "hysteria2":
+    if proto == "wireguard":
+        port = config.WG_PORT
+    elif proto == "hysteria2":
         # Hysteria2 always dials the QUIC/UDP port (default 443).
         port = config.XRAY_HY2_PORT
+    elif proto == "shadowsocks":
+        method = (u.get("ss_method") or settings.get("ss_method")
+                  or config.DEFAULT_SS_METHOD).lower()
+        port = config.XRAY_SS_2022_PORT if method in config.SS_2022_METHODS else config.XRAY_SS_PORT
     elif transport == "tcp":
         if proto == "vless" and sec == "tls" and config.fallback_active():
             # Single-port fallback: VLESS(TCP+TLS) is served on the fallback port.
@@ -169,6 +188,15 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
         else:
             port = _tcp_port(proto, sec)
     return host, port
+
+
+def _links_for(u: dict, request: Request | None) -> dict:
+    """Build a user's links (handles WireGuard server-pub resolution)."""
+    u = _ensure_wg_user(u)
+    settings = db.get_settings()
+    host, port = _user_endpoint(u, request)
+    server_pub = _wg_server_pub(u) if u.get("protocol") == "wireguard" else ""
+    return build_links(host, port, u, settings, server_pub=server_pub)
 
 
 def _set_session(response: Response, username: str, remember: bool = False):
@@ -238,9 +266,7 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
     out["quota_gb"] = round((u.get("quota_bytes") or 0) / (1024 ** 3), 3)
     out["avatar_url"] = _resolve_avatar(u.get("avatar") or "")["url"]
     if with_links and request is not None:
-        settings = db.get_settings()
-        host, port = _user_endpoint(u, request)
-        links = build_links(host, port, u, settings)
+        links = _links_for(u, request)
         panel_host = _public_host(request)
         out["links"] = links["all"]
         out["main_link"] = links["main"]
@@ -301,9 +327,18 @@ async def _node_status(node: dict) -> dict:
                     lat = (time.time() - t0) * 1000
                 data["online"] = r.status_code in (200, 401, 404)
                 data["latency_ms"] = round(lat)
+                # learn the node's WireGuard public key for client configs
+                try:
+                    body = r.json()
+                    remote_pub = (body.get("wg_pub") or "").strip()
+                    if remote_pub and remote_pub != (node.get("wg_pub") or ""):
+                        db.update_node(node["id"], {"wg_pub": remote_pub})
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001
                 data["online"] = False
     _node_status_cache[node["id"]] = {"ts": now, "data": data}
+    _node_latency_snap[node["id"]] = data["latency_ms"]
     return data
 
 
@@ -695,6 +730,13 @@ async def api_create_user(request: Request, _: str = Depends(_require_auth)):
         payload.get("transport") or settings.get("default_transport", "ws"),
         payload.get("security", "tls"),
     )
+    ss_method = (
+        payload.get("ss_method")
+        or settings.get("ss_method")
+        or config.DEFAULT_SS_METHOD
+    )
+    if ss_method not in config.SS_METHODS:
+        ss_method = config.DEFAULT_SS_METHOD
     fingerprint = payload.get("fingerprint") or settings.get("default_fingerprint", "chrome")
     if fingerprint not in config.VALID_FINGERPRINTS:
         fingerprint = "chrome"
@@ -719,10 +761,13 @@ async def api_create_user(request: Request, _: str = Depends(_require_auth)):
         "quota_bytes": int(float(payload.get("quota_gb") or 0) * 1024 ** 3),
         "expire_at": _expire_from_days(payload.get("expire_days")),
         "max_requests": int(payload.get("max_requests") or 0),
-        "node_id": int(payload.get("node_id") or 1),
+        "node_id": db.coerce_node_id(payload.get("node_id")),
         "avatar": _sanitize_avatar_key(payload.get("avatar")),
+        "ss_method": ss_method,
     }
     user = db.create_user(data)
+    if protocol == "wireguard":
+        user = wg.ensure_user_keys(user)
     _reload_xray()
     _trigger_node_sync()
     db.add_event("info", "user-create", f"{user['name']} ({protocol})", ip=_client_ip(request))
@@ -746,15 +791,20 @@ async def api_update_user(uid: str, request: Request, _: str = Depends(_require_
     fields = {}
     for k in ("name", "note", "enabled", "protocol", "transport", "security",
               "fingerprint", "alpn", "public_key", "short_id", "spider_x",
-              "max_devices", "allowed_ips", "max_requests", "node_id"):
+              "max_devices", "allowed_ips", "max_requests", "node_id", "ss_method"):
         if k in payload:
             fields[k] = payload[k]
     if "avatar" in payload:
         fields["avatar"] = _sanitize_avatar_key(payload.get("avatar"))
+    if "node_id" in fields:
+        fields["node_id"] = db.coerce_node_id(fields["node_id"])
+    if "ss_method" in fields and fields["ss_method"] not in config.SS_METHODS:
+        fields["ss_method"] = config.DEFAULT_SS_METHOD
     proto = fields.get("protocol", user.get("protocol", "vless"))
     if proto not in config.VALID_PROTOCOLS:
         raise HTTPException(400, "invalid-protocol")
-    if "transport" in fields or "security" in fields or proto == "hysteria2":
+    if ("transport" in fields or "security" in fields
+            or proto in ("hysteria2", "wireguard")):
         t, s = _normalize_protocol_fields(
             proto,
             fields.get("transport", user.get("transport", "ws")),
@@ -770,6 +820,8 @@ async def api_update_user(uid: str, request: Request, _: str = Depends(_require_
     if "expire_days" in payload:
         fields["expire_at"] = _expire_from_days(payload.get("expire_days"))
     updated = db.update_user(uid, fields)
+    if updated and updated.get("protocol") == "wireguard":
+        updated = wg.ensure_user_keys(updated)
     _reload_xray()
     _trigger_node_sync()
     db.add_event("info", "user-update", f"{uid}", ip=_client_ip(request))
@@ -834,14 +886,41 @@ async def api_user_qr(uid: str, request: Request, _: str = Depends(_require_auth
     user = db.get_user(uid)
     if not user:
         raise HTTPException(404, "not-found")
-    settings = db.get_settings()
-    host, port = _user_endpoint(user, request)
-    link = build_links(host, port, user, settings)["main"]
+    link = _links_for(user, request)["main"]
     img = qrcode.make(link, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
+
+
+@app.get("/api/users/{uid}/wireguard")
+async def api_user_wireguard(uid: str, request: Request, _: str = Depends(_require_auth)):
+    user = db.get_user(uid)
+    if not user or user.get("protocol") != "wireguard":
+        raise HTTPException(404, "not-found")
+    user = _ensure_wg_user(user)
+    host, port = _user_endpoint(user, request)
+    server_pub = _wg_server_pub(user)
+    conf = wg.client_conf(user, host, port, server_pub)
+    link = _links_for(user, request)["main"]
+    return {"ok": True, "conf": conf, "link": link, "endpoint": f"{host}:{port}"}
+
+
+@app.get("/api/users/{uid}/wireguard.conf")
+async def api_user_wireguard_conf(uid: str, request: Request, _: str = Depends(_require_auth)):
+    user = db.get_user(uid)
+    if not user or user.get("protocol") != "wireguard":
+        raise HTTPException(404, "not-found")
+    user = _ensure_wg_user(user)
+    host, port = _user_endpoint(user, request)
+    server_pub = _wg_server_pub(user)
+    conf = wg.client_conf(user, host, port, server_pub)
+    return Response(
+        content=conf,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="titan-{uid}.conf"'},
+    )
 
 
 def _expire_from_days(days) -> float | None:
@@ -863,6 +942,9 @@ def _normalize_protocol_fields(protocol: str, transport, security) -> tuple[str,
     if protocol == "hysteria2":
         # Hysteria2 has no transport and is always TLS (QUIC).
         return "", "tls"
+    if protocol == "wireguard":
+        # WireGuard is a UDP VPN: no transport/security concepts.
+        return "", ""
     t = (transport or "ws").lower()
     s = (security or "tls").lower()
     allowed = _SERVED_TRANSPORTS.get(protocol, {"ws"})
@@ -888,6 +970,10 @@ def _reload_xray():
         xray.restart_xray()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        wg.restart()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _trigger_node_sync():
@@ -896,6 +982,46 @@ def _trigger_node_sync():
         asyncio.create_task(nodesync.sync_all())
     except Exception:  # noqa: BLE001
         pass
+
+
+# ------------------------------------------------------------------ smart routing
+# Snapshot of per-node latency (ms), refreshed by _node_status whenever it runs.
+_node_latency_snap: dict = {}
+
+
+def _auto_node() -> dict | None:
+    """Fastest currently-online remote node (None if none measured yet)."""
+    best = None
+    for n in db.list_nodes():
+        if n.get("is_local") or not n.get("enabled"):
+            continue
+        if not (n.get("address") or "").strip():
+            continue
+        lat = _node_latency_snap.get(n["id"])
+        if lat is None:
+            continue
+        if best is None or lat < best[0]:
+            best = (lat, n)
+    return best[1] if best else None
+
+
+def _wg_server_pub(u: dict) -> str:
+    """The WG server public key for the node that will actually serve `u`."""
+    nid = nodesync.user_node_id(u)
+    node = None
+    if nid == 0:
+        node = _auto_node()
+    elif not config.IS_NODE:
+        node = db.get_node(nid)
+    if node and not node.get("is_local"):
+        return (node.get("wg_pub") or "").strip()
+    return wg.server_public_key()
+
+
+def _ensure_wg_user(u: dict) -> dict:
+    if u.get("protocol") == "wireguard":
+        u = wg.ensure_user_keys(u)
+    return u
 
 
 # ------------------------------------------------------------------ nodes api
@@ -1156,9 +1282,7 @@ async def sub_plain(uid: str, request: Request):
     user = db.get_user(uid)
     if not user:
         raise HTTPException(404, "not-found")
-    settings = db.get_settings()
-    host, port = _user_endpoint(user, request)
-    links = build_links(host, port, user, settings)
+    links = _links_for(user, request)
     combined = [c["link"] for c in links["info"]] + links["all"]
     body = subscription_text(combined)
     headers = _sub_headers(user)
@@ -1170,9 +1294,7 @@ async def sub_json(uid: str, request: Request):
     user = db.get_user(uid)
     if not user:
         raise HTTPException(404, "not-found")
-    settings = db.get_settings()
-    host, port = _user_endpoint(user, request)
-    links = build_links(host, port, user, settings)
+    links = _links_for(user, request)
     st = _user_status(user)
     return JSONResponse({
         "name": user["name"],
@@ -1193,9 +1315,7 @@ async def sub_base64(uid: str, request: Request):
     user = db.get_user(uid)
     if not user:
         raise HTTPException(404, "not-found")
-    settings = db.get_settings()
-    host, port = _user_endpoint(user, request)
-    links = build_links(host, port, user, settings)
+    links = _links_for(user, request)
     combined = [c["link"] for c in links["info"]] + links["all"]
     return PlainTextResponse(subscription_text(combined), headers=_sub_headers(user))
 
@@ -1241,7 +1361,12 @@ async def api_public_status(uid: str):
 # ------------------------------------------------------------------ system
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ts": time.time(), "version": APP_VERSION}
+    return {
+        "status": "ok",
+        "ts": time.time(),
+        "version": APP_VERSION,
+        "wg_pub": wg.server_public_key(),  # "" when WireGuard is unavailable
+    }
 
 
 @app.get("/api/stats")

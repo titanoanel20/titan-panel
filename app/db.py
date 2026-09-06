@@ -16,6 +16,14 @@ from . import config
 _lock = threading.RLock()
 _conn: sqlite3.Connection | None = None
 
+
+def coerce_node_id(v) -> int:
+    """Coerce a node_id, preserving 0 (auto / nearest node)."""
+    try:
+        return int(v) if v not in (None, "") else 1
+    except (TypeError, ValueError):
+        return 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -58,6 +66,10 @@ CREATE TABLE IF NOT EXISTS users (
     request_count   INTEGER NOT NULL DEFAULT 0,
     max_requests    INTEGER NOT NULL DEFAULT 0,
     avatar          TEXT NOT NULL DEFAULT '',
+    ss_method       TEXT NOT NULL DEFAULT '2022-blake3-aes-128-gcm',
+    wg_ip           TEXT NOT NULL DEFAULT '',
+    wg_priv         TEXT NOT NULL DEFAULT '',
+    wg_pub          TEXT NOT NULL DEFAULT '',
     last_seen       REAL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -83,6 +95,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     country_code TEXT NOT NULL DEFAULT '',
     flag         TEXT NOT NULL DEFAULT '🏳️',
     token        TEXT NOT NULL DEFAULT '',
+    wg_pub       TEXT NOT NULL DEFAULT '',
     is_local     INTEGER NOT NULL DEFAULT 0,
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   REAL NOT NULL,
@@ -125,11 +138,26 @@ def _ensure_bootstrap():
     if "avatar" not in cols:
         c.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
         c.commit()
+    if "ss_method" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN ss_method TEXT NOT NULL DEFAULT '2022-blake3-aes-128-gcm'")
+        c.commit()
+    if "wg_ip" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN wg_ip TEXT NOT NULL DEFAULT ''")
+        c.commit()
+    if "wg_priv" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN wg_priv TEXT NOT NULL DEFAULT ''")
+        c.commit()
+    if "wg_pub" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN wg_pub TEXT NOT NULL DEFAULT ''")
+        c.commit()
 
     # migration: nodes.token (per-node credential issued by the main panel)
     ncols = [r["name"] for r in c.execute("PRAGMA table_info(nodes)").fetchall()]
     if "token" not in ncols:
         c.execute("ALTER TABLE nodes ADD COLUMN token TEXT NOT NULL DEFAULT ''")
+        c.commit()
+    if "wg_pub" not in ncols:
+        c.execute("ALTER TABLE nodes ADD COLUMN wg_pub TEXT NOT NULL DEFAULT ''")
         c.commit()
 
     # seed the local node (this server) once
@@ -256,7 +284,7 @@ def create_user(data: dict) -> dict:
             "security", "fingerprint", "alpn", "public_key", "short_id",
             "spider_x", "max_devices", "first_device_uid", "allowed_ips",
             "quota_bytes", "expire_at", "created_at", "max_requests", "node_id",
-            "avatar",
+            "avatar", "ss_method", "wg_ip", "wg_priv", "wg_pub",
         ]
         now = time.time()
         values = {
@@ -280,8 +308,12 @@ def create_user(data: dict) -> dict:
             "expire_at": data.get("expire_at"),
             "created_at": now,
             "max_requests": int(data.get("max_requests", 0) or 0),
-            "node_id": int(data.get("node_id", 1) or 1),
+            "node_id": coerce_node_id(data.get("node_id")),
             "avatar": data.get("avatar", "") or "",
+            "ss_method": data.get("ss_method", "2022-blake3-aes-128-gcm"),
+            "wg_ip": data.get("wg_ip", "") or "",
+            "wg_priv": data.get("wg_priv", "") or "",
+            "wg_pub": data.get("wg_pub", "") or "",
         }
         placeholders = ", ".join("?" for _ in cols)
         c.execute(
@@ -298,6 +330,7 @@ def update_user(uid: str, fields: dict) -> dict | None:
         "fingerprint", "alpn", "public_key", "short_id", "spider_x",
         "max_devices", "first_device_uid", "quota_bytes", "expire_at",
         "max_requests", "node_id", "avatar", "uuid",
+        "ss_method", "wg_ip", "wg_priv", "wg_pub",
     }
     with _lock:
         c = _connect()
@@ -468,7 +501,7 @@ def get_node_by_token(token: str) -> dict | None:
 
 
 def update_node(node_id: int, fields: dict) -> dict | None:
-    allowed = {"name", "address", "city", "country", "country_code", "flag", "enabled"}
+    allowed = {"name", "address", "city", "country", "country_code", "flag", "enabled", "wg_pub"}
     with _lock:
         c = _connect()
         sets, vals = [], []

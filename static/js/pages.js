@@ -8,12 +8,13 @@
   const { $, $$, esc, ICONS } = U;
 
   // ---------------- shared bits ----------------
-  const PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria2'];
+  const PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria2', 'wireguard'];
   const TRANSPORTS = ['ws', 'xhttp', 'grpc', 'tcp', 'httpupgrade'];
   const FINGERPRINTS = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized'];
   const ALPNS = ['http/1.1', 'h2,http/1.1', 'h3,h2,http/1.1', ''];
+  const SS_METHODS = ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305', 'aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305'];
   // Protocols that have no transport/security concept in the UI.
-  const PROTO_NO_NET = { hysteria2: true };
+  const PROTO_NO_NET = { hysteria2: true, wireguard: true };
 
   function flagFor(cc) {
     cc = (cc || '').toUpperCase().trim();
@@ -196,19 +197,43 @@
     });
   }
 
-  // Protocols like Hysteria2 have no transport/security pickers — disable them.
+  // Protocols like Hysteria2/WireGuard have no transport/security pickers —
+  // disable them. Shadowsocks shows a method picker instead.
   function wireProtoDeps(rootEl) {
     const pSel = rootEl.querySelector('select[name="protocol"]');
     const tSel = rootEl.querySelector('select[name="transport"]');
     const sSel = rootEl.querySelector('select[name="security"]');
+    const ssSel = rootEl.querySelector('select[name="ss_method"]');
+    const ssField = ssSel ? ssSel.closest('.field') : null;
     if (!pSel) return;
     const apply = () => {
-      const noNet = !!PROTO_NO_NET[pSel.value];
+      const p = pSel.value;
+      const noNet = !!PROTO_NO_NET[p];
       if (tSel) tSel.disabled = noNet;
       if (sSel) sSel.disabled = noNet;
+      if (ssField) ssField.style.display = (p === 'shadowsocks') ? '' : 'none';
     };
     pSel.addEventListener('change', apply);
     apply();
+  }
+
+  // Node picker with an "auto (nearest)" option (value 0).
+  function nodeOptionsHtml(nodes, sel, withLocation) {
+    const cur = (sel == null || sel === '') ? (nodes[0] ? nodes[0].id : 0) : Number(sel);
+    const auto = `<option value="0" ${cur === 0 ? 'selected' : ''}>🌐 ${I18N.t('node_auto')}</option>`;
+    return auto + nodes.map(n => {
+      const loc = withLocation ? ' — ' + esc(n.city !== '—' ? n.city : n.country) : '';
+      return `<option value="${n.id}" ${cur === n.id ? 'selected' : ''}>${esc(flagEmoji(n))} ${esc(n.name)}${loc}</option>`;
+    }).join('');
+  }
+
+  // Node label for a user row (handles node_id=0 → "auto").
+  function nodeNameHtml(u, nodeMap) {
+    if (Number(u && u.node_id) === 0) return `<span class="node-inline">🌐<span>${I18N.t('node_auto')}</span></span>`;
+    const n = nodeMap[(u && u.node_id) || 1];
+    if (!n) return '—';
+    const nm = (n.city && n.city !== '—') ? n.city : n.name;
+    return `<span class="node-inline">${flagHtml(n, 'flag-sm')}<span>${esc(nm)}</span></span>`;
   }
 
   // ---------------- form field builders ----------------
@@ -246,8 +271,10 @@
           <input class="input" type="number" min="0" name="max_devices" value="${u?.max_devices || 0}"></label>
         <label class="field"><span class="field-label" data-i18n="max_requests"></span>
           <input class="input" type="number" min="0" name="max_requests" value="${u?.max_requests || 0}"></label>
+        <label class="field" style="display:none"><span class="field-label" data-i18n="ss_method"></span>
+          <select class="select" name="ss_method">${SS_METHODS.map(m => `<option value="${m}" ${(u?.ss_method || s.ss_method || '2022-blake3-aes-128-gcm') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
         ${nodes ? `<label class="field"><span class="field-label" data-i18n="select_node"></span>
-          <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(flagEmoji(n))} ${esc(n.name)}</option>`).join('')}</select></label>` : ''}
+          <select class="select" name="node_id">${nodeOptionsHtml(nodes, u?.node_id, false)}</select></label>` : ''}
         <label class="field full"><span class="field-label" data-i18n="allowed_ips"></span>
           <input class="input" name="allowed_ips" value="${esc((u?.allowed_ips || []).join(','))}" dir="ltr"></label>
         <label class="field full"><span class="field-label" data-i18n="note"></span>
@@ -260,6 +287,7 @@
     return {
       name: fd.get('name'), protocol: fd.get('protocol'), transport: fd.get('transport'),
       security: fd.get('security'), fingerprint: fd.get('fingerprint'), alpn: fd.get('alpn'),
+      ss_method: fd.get('ss_method'),
       quota_gb: parseFloat(fd.get('quota_gb')) || 0,
       expire_days: parseInt(fd.get('expire_days')) || 0,
       max_devices: parseInt(fd.get('max_devices')) || 0,
@@ -282,18 +310,33 @@
           <button class="btn sm" data-copy="${esc(val)}">${ICONS.copy}</button>
         </div>
       </div>`;
+    let wgBlock = '';
+    if (d.protocol === 'wireguard') {
+      let conf = '';
+      try { conf = (await U.apiJson(`/api/users/${uid}/wireguard`)).conf || ''; } catch (_) { /* keep */ }
+      wgBlock = `
+        <div style="margin:14px 0;padding:12px;border:1px solid var(--border);border-radius:12px">
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="field-label" data-i18n="wg_config"></span>
+            <a class="btn sm primary" href="/api/users/${uid}/wireguard.conf" download>${ICONS.download}<span data-i18n="wg_download"></span></a>
+          </div>
+          <textarea class="input" rows="9" dir="ltr" readonly style="font-family:monospace;font-size:.72rem">${esc(conf)}</textarea>
+        </div>`;
+    }
     U.modal({
       title: I18N.t('links') + ' — ' + esc(d.name || uid),
       body: `
         ${(d.links || []).map(l => linkRow((l.split('://')[0] || '').toUpperCase(), l)).join('')}
         ${linkRow(I18N.t('sub_link'), d.sub_url)}
         ${linkRow('Status URL', d.status_url)}
+        ${wgBlock}
         <div style="text-align:center;margin-top:10px">
           <img src="/api/users/${uid}/qr" style="max-width:200px;border-radius:12px;border:1px solid var(--border)" alt="QR">
         </div>`,
       foot: `<button class="btn" data-close>${I18N.t('close')}</button>`,
     });
     U.$$('[data-copy]').forEach(b => b.addEventListener('click', () => U.copyText(b.dataset.copy)));
+    I18N.apply();
   }
 
   // ================================================================ dashboard
@@ -439,11 +482,14 @@
       const latest = [...users].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 3);
       $('#latestConfigs').innerHTML = latest.length ? headCfgs + latest.map(u => {
         const n = nodeMap[u.node_id || 1];
+        const nCell = Number(u.node_id) === 0
+          ? '<span class="config-node-name">🌐 ' + I18N.t('node_auto') + '</span>'
+          : (n ? flagHtml(n, 'flag-sm') + '<span class="config-node-name">' + esc((n.city && n.city !== '—') ? n.city : n.name) + '</span>' : '—');
         return `
         <div class="config-row">
           <div class="config-cell config-name"><div class="u-inline">${userAvatarHtml(u)}<span>${esc(u.name)}</span></div></div>
           <div class="config-cell">${esc((u.protocol || '').toUpperCase())}</div>
-          <div class="config-cell">${n ? flagHtml(n, 'flag-sm') + '<span class="config-node-name">' + esc((n.city && n.city !== '—') ? n.city : n.name) + '</span>' : '—'}</div>
+          <div class="config-cell">${nCell}</div>
           <div class="config-cell config-status">${badgeOf(u)}</div>
         </div>`;
       }).join('') : U.empty('⚙️', I18N.t('no_configs'), '');
@@ -661,11 +707,10 @@
         return u.enabled && st.live_enabled;
       });
       $('#cfgRows').innerHTML = list.length ? list.map(u => {
-        const n = nm[u.node_id || 1];
         return `<tr>
           <td>${statusBadge(u)}</td>
           <td><div class="cell-main"><div class="u-inline">${userAvatarHtml(u)}<span class="cell-title">${esc(u.name)}</span></div><span class="cell-sub">${esc(u.note || '')}</span></div></td>
-          <td>${n ? `<span class="node-inline">${flagHtml(n, 'flag-sm')}<span>${esc(n.city && n.city !== '—' ? n.city : n.name)}</span></span>` : '—'}</td>
+          <td>${nodeNameHtml(u, nm)}</td>
           <td>${protoTag(u.protocol)}</td>
           <td>${U.fmtDate(u.created_at)}</td>
           <td>${u.expire_at ? U.fmtDate(u.expire_at) : `<span class="cell-sub">${I18N.t('never')}</span>`}</td>
@@ -710,11 +755,12 @@
       if (!f) return;
       const v = collectUserForm(f);
       const n = nodes.find(x => x.id === v.node_id);
+      const nodeLabel = v.node_id === 0 ? '🌐 ' + I18N.t('node_auto') : (n ? flagHtml(n, 'flag-sm') + ' ' + esc(n.name) : '—');
       $('#cfgPreview').innerHTML = `
         <div class="row" style="gap:8px;margin-bottom:8px"><span class="tag">${esc((v.protocol || '').toUpperCase())}</span><span class="tag">${esc((v.transport || '').toUpperCase())}</span><span class="tag">${esc(v.security || '')}</span></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
           <div><span class="cell-sub">${I18N.t('name')}:</span> ${esc(v.name || '—')}</div>
-          <div><span class="cell-sub">${I18N.t('node')}:</span> ${n ? flagHtml(n, 'flag-sm') + ' ' + esc(n.name) : '—'}</div>
+          <div><span class="cell-sub">${I18N.t('node')}:</span> ${nodeLabel}</div>
           <div><span class="cell-sub">${I18N.t('quota')}:</span> ${v.quota_gb > 0 ? v.quota_gb + ' GB' : I18N.t('unlimited')}</div>
           <div><span class="cell-sub">${I18N.t('expiry')}:</span> ${v.expire_days > 0 ? v.expire_days + ' ' + I18N.t('rep_days_7').replace('۷','') + '' : I18N.t('never')}</div>
         </div>`;
@@ -736,7 +782,7 @@
           </div>
           <div class="wiz-section"><h4><span class="step">2</span>${I18N.t('wizard_server')}</h4>
             <label class="field"><span class="field-label" data-i18n="select_node"></span>
-              <select class="select" name="node_id">${nodes.map(n => `<option value="${n.id}" ${(u?.node_id || nodes[0].id) === n.id ? 'selected' : ''}>${esc(flagEmoji(n))} ${esc(n.name)} — ${esc(n.city !== '—' ? n.city : n.country)}</option>`).join('')}</select>
+              <select class="select" name="node_id">${nodeOptionsHtml(nodes, u?.node_id, true)}</select>
             </label>
           </div>
           <div class="wiz-section"><h4><span class="step">3</span>${I18N.t('wizard_network')}</h4>
@@ -745,6 +791,8 @@
                 <select class="select" name="protocol">${PROTOCOLS.map(p => `<option value="${p}" ${(u?.protocol || 'vless') === p ? 'selected' : ''}>${p.toUpperCase()}</option>`).join('')}</select></label>
               <label class="field"><span class="field-label" data-i18n="transport"></span>
                 <select class="select" name="transport">${TRANSPORTS.map(t => `<option value="${t}" ${(u?.transport || settings.default_transport || 'ws') === t ? 'selected' : ''}>${t.toUpperCase()}</option>`).join('')}</select></label>
+              <label class="field" style="display:none"><span class="field-label" data-i18n="ss_method"></span>
+                <select class="select" name="ss_method">${SS_METHODS.map(m => `<option value="${m}" ${(u?.ss_method || settings.ss_method || '2022-blake3-aes-128-gcm') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
             </div>
           </div>
           <div class="wiz-section"><h4><span class="step">4</span>${I18N.t('wizard_security')}</h4>

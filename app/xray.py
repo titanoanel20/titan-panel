@@ -7,7 +7,8 @@ import os
 import re
 import subprocess
 
-from . import config, db
+from . import config, db, sskeys
+from . import nodes as nodesync
 
 log = logging.getLogger("titan.xray")
 
@@ -52,17 +53,8 @@ def _blocked_rules(settings: dict) -> list:
 
 
 def _xray_users() -> list[dict]:
-    """Users whose traffic this process must proxy.
-
-    On the main panel only users assigned to the *local* node are proxied here;
-    every other user is proxied by their remote node. On a node, every user in
-    the (synced) database is proxied locally.
-    """
-    users = db.list_users()
-    if config.IS_NODE:
-        return users
-    local_ids = {n["id"] for n in db.list_nodes() if n.get("is_local")}
-    return [u for u in users if int(u.get("node_id") or 1) in local_ids]
+    """Users whose traffic this process must proxy (role-aware, see nodes.py)."""
+    return nodesync.local_users()
 
 
 def generate_xray_config() -> dict:
@@ -209,19 +201,56 @@ def generate_xray_config() -> dict:
             "tag": "in-vmess-grpc",
         })
 
-    # Shadowsocks inbound.
+    # Shadowsocks inbounds. Legacy AEAD methods share one inbound (per-client
+    # method/password); the 2022 methods use a separate inbound with a shared
+    # server PSK and per-user PSKs (SIP008).
     if ss_users:
-        ss_clients = []
-        for u in ss_users:
-            key = __import__("base64").urlsafe_b64encode(u["uuid"].encode()[:16]).decode().rstrip("=")
-            ss_clients.append({"email": u["uid"], "method": "aes-128-gcm", "password": key})
-        inbounds.append({
-            "listen": "127.0.0.1",
-            "port": config.XRAY_SS_PORT if hasattr(config, "XRAY_SS_PORT") else 10006,
-            "protocol": "shadowsocks",
-            "settings": {"clients": ss_clients, "network": "tcp,udp"},
-            "tag": "in-ss",
-        })
+        ss_methods = {
+            u.get("ss_method") or settings.get("ss_method") or config.DEFAULT_SS_METHOD
+            for u in ss_users
+        }
+        legacy = [u for u in ss_users
+                  if (u.get("ss_method") or settings.get("ss_method") or config.DEFAULT_SS_METHOD)
+                  not in config.SS_2022_METHODS]
+        ss2022 = [u for u in ss_users
+                  if (u.get("ss_method") or settings.get("ss_method") or config.DEFAULT_SS_METHOD)
+                  in config.SS_2022_METHODS]
+        if legacy:
+            ss_clients = []
+            for u in legacy:
+                method = (u.get("ss_method") or settings.get("ss_method")
+                          or config.DEFAULT_SS_METHOD)
+                ss_clients.append({
+                    "email": u["uid"],
+                    "method": method,
+                    "password": sskeys.psk_inbound(u["uuid"], method),
+                })
+            inbounds.append({
+                "listen": "127.0.0.1",
+                "port": config.XRAY_SS_PORT,
+                "protocol": "shadowsocks",
+                "settings": {"clients": ss_clients, "network": "tcp,udp"},
+                "tag": "in-ss",
+            })
+        if ss2022:
+            ss2022_methods = ss_methods & config.SS_2022_METHODS
+            method = next(iter(ss2022_methods)) if ss2022_methods else config.DEFAULT_SS_METHOD
+            method = method if method in config.SS_2022_METHODS else config.DEFAULT_SS_METHOD
+            inbounds.append({
+                "listen": "127.0.0.1",
+                "port": config.XRAY_SS_2022_PORT,
+                "protocol": "shadowsocks",
+                "settings": {
+                    "method": method,
+                    "password": sskeys.server_psk(method),
+                    "clients": [{
+                        "email": u["uid"],
+                        "password": sskeys.psk_inbound(u["uuid"], method),
+                    } for u in ss2022],
+                    "network": "tcp,udp",
+                },
+                "tag": "in-ss-2022",
+            })
 
     # ---------------- raw TCP inbounds (plain / TLS / Reality) ----------------
     tcp_users = [u for u in users if u.get("transport") == "tcp"]

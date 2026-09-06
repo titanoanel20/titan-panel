@@ -192,6 +192,7 @@ def start_background_tasks(app):
         asyncio.create_task(_sync_nodes_loop()),
         asyncio.create_task(_report_usage_loop()),
         asyncio.create_task(_register_with_main()),
+        asyncio.create_task(_refresh_node_latencies()),
     ]
     app.state.titan_tasks = tasks
     return tasks
@@ -232,6 +233,29 @@ async def _report_usage_loop():
             break
         except Exception:  # noqa: BLE001
             await asyncio.sleep(10)
+
+
+async def _refresh_node_latencies():
+    """Main role: keep per-node latency fresh so 'auto' routing picks the
+    fastest node (the /health probe also learns each node's WG public key)."""
+    if config.IS_NODE:
+        return
+    await asyncio.sleep(12)
+    while True:
+        try:
+            await asyncio.sleep(45)
+            from . import main as m
+            nodes = [
+                n for n in db.list_nodes()
+                if not n.get("is_local") and n.get("enabled")
+                and (n.get("address") or "").strip()
+            ]
+            for n in nodes:
+                await m._node_status(n)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(15)
 
 
 async def _register_with_main():

@@ -19,6 +19,12 @@ RUN curl -fsSL -o xray.zip "https://github.com/XTLS/Xray-core/releases/latest/do
     && chmod +x /usr/local/bin/xray \
     && rm xray.zip
 
+# Optional userspace WireGuard server (AmneziaWG). Runs only on VPS/Docker with
+# NET_ADMIN + /dev/net/tun; the panel skips it gracefully when absent.
+RUN curl -fsSL -o /usr/local/bin/amnezia-wg-go "https://github.com/amnezia-vpn/amnezia-wg-go/releases/latest/download/amnezia-wg-go-linux-amd64" \
+    && chmod +x /usr/local/bin/amnezia-wg-go \
+    || echo "amnezia-wg-go download skipped (WireGuard will be disabled)"
+
 COPY . /app
 COPY nginx.conf /etc/nginx/nginx.conf
 

@@ -29,7 +29,45 @@ SYNC_FIELDS = (
     "uuid", "name", "enabled", "protocol", "transport", "security",
     "fingerprint", "alpn", "public_key", "short_id", "spider_x",
     "max_devices", "quota_bytes", "expire_at", "max_requests", "avatar",
+    "ss_method", "wg_ip", "wg_pub",
 )
+
+
+def user_node_id(u: dict) -> int:
+    """A user's assigned node id; 0 = auto (nearest online node)."""
+    v = u.get("node_id")
+    try:
+        return int(v) if v not in (None, "") else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def local_users() -> list[dict]:
+    """Users whose traffic this process must serve.
+
+    On the main panel only users assigned to the *local* node are served here;
+    users on node_id=0 (auto) are served by remote nodes, so they are excluded
+    — unless no remote node exists, in which case they fall back to local.
+    On a node, every synced user is local.
+    """
+    users = db.list_users()
+    if config.IS_NODE:
+        return users
+    local_ids = {n["id"] for n in db.list_nodes() if n.get("is_local")}
+    has_remote = any(
+        not n.get("is_local") and n.get("enabled") and (n.get("address") or "").strip()
+        for n in db.list_nodes()
+    )
+
+    def served(u: dict) -> bool:
+        nid = user_node_id(u)
+        if nid in local_ids:
+            return True
+        if nid == 0 and not has_remote:
+            return True  # no remote node: serve auto users locally
+        return False
+
+    return [u for u in users if served(u)]
 
 
 def _matches(a: str, b: str) -> bool:
@@ -114,18 +152,22 @@ async def sync_node(node: dict, users: list[dict], timeout: float = 8.0) -> bool
 
 
 async def sync_all() -> dict[str, bool]:
-    """Push users to every remote node (main role). Returns {node_name: ok}."""
+    """Push users to every remote node (main role). Returns {node_name: ok}.
+
+    A user assigned to node N goes to node N; a user with node_id=0 ("auto")
+    goes to *every* enabled remote node so whichever is fastest can serve it.
+    """
     results: dict[str, bool] = {}
     users = db.list_users()
-    by_node: dict[int, list] = {}
-    for u in users:
-        by_node.setdefault(int(u.get("node_id") or 1), []).append(u)
     for node in db.list_nodes():
         if node.get("is_local") or not node.get("enabled"):
             continue
         if not node.get("token") and not config.NODE_SECRET:
             continue
-        node_users = sorted(by_node.get(node["id"], []), key=lambda x: x["uid"])
+        node_users = sorted(
+            [u for u in users if user_node_id(u) in (node["id"], 0)],
+            key=lambda x: x["uid"],
+        )
         # skip re-push when nothing changed since the last successful sync
         h = _payload_hash(node_users)
         if db.get_meta(f"node_sync_hash:{node['id']}") == h:

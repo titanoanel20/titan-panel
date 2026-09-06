@@ -12,11 +12,7 @@ import json
 import time
 from urllib.parse import quote
 
-from . import config
-
-SS_METHODS = [
-    "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm",
-]
+from . import config, sskeys
 
 # transports the panel can actually serve, per protocol
 SERVED_TRANSPORTS = {
@@ -171,12 +167,39 @@ def build_trojan_link(host: str, port: int, user: dict, settings: dict) -> str:
 
 
 def build_ss_link(host: str, port: int, user: dict, settings: dict) -> str:
-    method = SS_METHODS[0]
-    # Derive a stable 16-byte key from the uuid (works for aes-128-gcm).
-    key = base64.urlsafe_b64encode(user["uuid"].encode()[:16]).decode().rstrip("=")
+    method = (
+        user.get("ss_method") or settings.get("ss_method") or config.DEFAULT_SS_METHOD
+    ).lower()
+    if method not in config.SS_METHODS:
+        method = config.DEFAULT_SS_METHOD
+    name = quote("TiTaN-" + user["name"] + "-SS")
+    if method in config.SS_2022_METHODS:
+        # SIP008: ss://<method>:<base64url-psk>@host:port#name
+        key = sskeys.psk_link(user["uuid"], method)
+        return f"ss://{method}:{key}@{host}:{port}#{name}"
+    # legacy AEAD: ss://<b64(method:key)>@host:port#name
+    key = sskeys.psk_link(user["uuid"], method)
     raw = f"{method}:{key}"
     b64 = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-    return f"ss://{b64}@{host}:{port}#{quote('TiTaN-' + user['name'] + '-SS')}"
+    return f"ss://{b64}@{host}:{port}#{name}"
+
+
+def build_wg_link(host: str, port: int, user: dict, server_pub: str) -> str:
+    """WireGuard: base64 of the wg-quick config, in a wireguard:// URI."""
+    conf = (
+        "[Interface]\n"
+        f"PrivateKey = {user.get('wg_priv') or ''}\n"
+        f"Address = {user.get('wg_ip') or ''}/32\n"
+        "DNS = 1.1.1.1\n"
+        "\n"
+        "[Peer]\n"
+        f"PublicKey = {server_pub or ''}\n"
+        "AllowedIPs = 0.0.0.0/0, ::/0\n"
+        f"Endpoint = {host}:{port}\n"
+        "PersistentKeepalive = 25\n"
+    )
+    b64 = base64.b64encode(conf.encode()).decode()
+    return f"wireguard://{b64}#{quote('TiTaN-' + user['name'] + '-WG')}"
 
 
 def build_hy2_link(host: str, port: int, user: dict, settings: dict) -> str:
@@ -190,7 +213,8 @@ def build_hy2_link(host: str, port: int, user: dict, settings: dict) -> str:
     return f"hysteria2://{quote(auth, safe='')}@{host}:{port}/?{params}#{name}"
 
 
-def build_links(host: str, port: int, user: dict, settings: dict) -> dict:
+def build_links(host: str, port: int, user: dict, settings: dict,
+                server_pub: str = "") -> dict:
     """Return {"main": link, "all": [links], "info": [dummy status links]}."""
     out = {}
     if user["protocol"] == "vless":
@@ -203,6 +227,8 @@ def build_links(host: str, port: int, user: dict, settings: dict) -> dict:
         out["shadowsocks"] = build_ss_link(host, port, user, settings)
     elif user["protocol"] == "hysteria2":
         out["hysteria2"] = build_hy2_link(host, port, user, settings)
+    elif user["protocol"] == "wireguard":
+        out["wireguard"] = build_wg_link(host, port, user, server_pub)
 
     all_links = list(out.values())
 

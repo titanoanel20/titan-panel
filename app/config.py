@@ -20,6 +20,7 @@ XRAY_TROJAN_WS_PORT = int(os.environ.get("XRAY_TROJAN_WS_PORT", "10003"))
 XRAY_XHTTP_PORT = int(os.environ.get("XRAY_XHTTP_PORT", "10004"))
 XRAY_GRPC_PORT = int(os.environ.get("XRAY_GRPC_PORT", "10005"))
 XRAY_SS_PORT = int(os.environ.get("XRAY_SS_PORT", "10006"))
+XRAY_SS_2022_PORT = int(os.environ.get("XRAY_SS_2022_PORT", "10014"))
 XRAY_API_PORT = int(os.environ.get("XRAY_API_PORT", "10085"))
 
 # ------------------------------------------------------------------ raw TCP
@@ -58,6 +59,32 @@ XRAY_HTTPUPGRADE_PORT = int(os.environ.get("XRAY_HTTPUPGRADE_PORT", "10013"))
 # 0 = disabled. On a VPS/Docker set it to 443; on Railway pick a TCP-proxied
 # port (443 is reserved for the HTTPS edge). Needs TITAN_TLS_CERT/_KEY.
 FALLBACK_PORT = int(os.environ.get("TITAN_FALLBACK_PORT", "0") or 0)
+
+# ------------------------------------------------------------------ Shadowsocks 2022
+# 2022 methods use a pre-shared key (like WireGuard); the PSK is derived
+# deterministically from the user uuid so main and nodes always agree.
+SS_METHODS = [
+    "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305",
+    "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305",
+]
+SS_2022_METHODS = {
+    "2022-blake3-aes-128-gcm",
+    "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305",
+}
+DEFAULT_SS_METHOD = os.environ.get("XRAY_SS_METHOD", "2022-blake3-aes-128-gcm")
+
+# ------------------------------------------------------------------ WireGuard
+# Optional userspace WireGuard/AmneziaWG server (VPS/Docker only — needs a TUN
+# device + NET_ADMIN). The panel generates keypairs and the client config, and
+# manages a userspace WG process. Skipped gracefully when the binary is absent.
+WG_PORT = int(os.environ.get("TITAN_WG_PORT", "51820"))            # UDP
+WG_SUBNET = os.environ.get("TITAN_WG_SUBNET", "10.200.0.0/24")
+WG_BIN = os.environ.get("TITAN_WG_BIN", "/usr/local/bin/amnezia-wg-go")
+WG_CONFIG_PATH = os.environ.get(
+    "TITAN_WG_CONFIG", "/usr/local/bin/wg0.conf"
+)
 
 
 def tls_ready() -> bool:
@@ -159,4 +186,4 @@ VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "
 VALID_ALPNS = {"http/1.1", "h2,http/1.1", "h3,h2,http/1.1", ""}
 VALID_TRANSPORTS = {"ws", "xhttp", "grpc", "tcp", "httpupgrade"}
 VALID_SECURITY = {"none", "tls", "reality"}
-VALID_PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "hysteria2"}
+VALID_PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "hysteria2", "wireguard"}
