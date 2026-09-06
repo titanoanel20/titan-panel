@@ -67,10 +67,54 @@
     return '/static/img/titan-avatar.svg';
   }
 
+  // keep the topbar profile picture in sync after the admin changes it
+  function syncTopbarAvatar(key) {
+    const top = $('#adminAvatar');
+    if (top) top.src = avatarUrl(key);
+  }
+
   function openGalleryPicker(opts = {}) {
     return new Promise((resolve) => {
       let items = [];
       let sel = opts.current || '';
+      // The picker is a stacked overlay: opening it must NOT destroy the
+      // parent modal (U.modal() calls closeModal() on open, which would kill
+      // the user/config form we opened the picker from).
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay gallery-overlay';
+      overlay.innerHTML = `
+        <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(I18N.t('gallery_title'))}">
+          <div class="m-head"><h3>${esc(I18N.t('gallery_title'))}</h3><button class="icon-btn" data-close>${ICONS.close}</button></div>
+          <div class="m-body">
+            <button type="button" class="btn sm" id="galLogo" style="margin-bottom:14px">${I18N.t('gallery_use_logo')}</button>
+            <div class="gallery-grid" id="galGrid"></div>
+            <div class="row" style="gap:8px;margin-top:16px">
+              <button type="button" class="btn sm" id="galUploadBtn">${ICONS.upload}<span data-i18n="gallery_upload"></span></button>
+              <input type="file" id="galFile" accept="image/png,image/jpeg,image/webp" class="hidden">
+            </div>
+          </div>
+          <div class="m-foot">
+            <button class="btn" data-close>${I18N.t('cancel')}</button>
+            <button class="btn primary" id="galConfirm">${I18N.t('save')}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const m = {
+        el: overlay,
+        query: (s) => overlay.querySelector(s),
+        queryAll: (s) => Array.from(overlay.querySelectorAll(s)),
+      };
+      let done = false;
+      const finish = (val) => {
+        if (done) return;
+        done = true;
+        overlay.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') finish(null); };
+      document.addEventListener('keydown', onKey);
+
       const render = () => {
         const grid = m.query('#galGrid');
         const logoBtn = m.query('#galLogo');
@@ -83,18 +127,6 @@
             ${!it.builtin ? `<span class="gallery-del" data-del="${esc(it.id)}">×</span>` : ''}
           </button>`).join('') : `<div class="cell-sub">${I18N.t('gallery_empty')}</div>`;
       };
-      const m = U.modal({
-        title: I18N.t('gallery_title'),
-        body: `
-          <button type="button" class="btn sm" id="galLogo" style="margin-bottom:14px">${I18N.t('gallery_use_logo')}</button>
-          <div class="gallery-grid" id="galGrid"></div>
-          <div class="row" style="gap:8px;margin-top:16px">
-            <button type="button" class="btn sm" id="galUploadBtn">${ICONS.upload}<span data-i18n="gallery_upload"></span></button>
-            <input type="file" id="galFile" accept="image/png,image/jpeg,image/webp" class="hidden">
-          </div>`,
-        foot: `<button class="btn" data-close>${I18N.t('cancel')}</button>
-               <button class="btn primary" id="galConfirm">${I18N.t('save')}</button>`,
-      });
       I18N.apply();
       render();
       (async () => {
@@ -133,8 +165,10 @@
         } catch (_) { U.toast(I18N.t('error'), 'err'); }
         e.target.value = '';
       });
-      m.query('#galConfirm').addEventListener('click', () => { U.closeModal(); resolve(sel); });
-      m.el.addEventListener('click', (e) => { if (e.target === m.el || e.target.closest('[data-close]')) resolve(null); });
+      m.query('#galConfirm').addEventListener('click', () => finish(sel));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.closest('[data-close]')) finish(null);
+      });
     });
   }
 
@@ -1134,6 +1168,7 @@
         await U.apiJson('/api/admin-avatar', { method: 'POST', body: JSON.stringify({ avatar: key }) });
         s.admin_avatar = key || 'titan';
         renderAvatar();
+        syncTopbarAvatar(key);
         U.toast(I18N.t('avatar_saved'), 'ok');
       } catch (err) { U.toast(err.message, 'err'); }
     });
@@ -1208,6 +1243,7 @@
         U.toast(I18N.t('avatar_saved'), 'ok');
         const img = $('#adminCard .profile-card .avatar img');
         if (img) img.src = avatarUrl(key);
+        syncTopbarAvatar(key);
       } catch (err) { U.toast(err.message, 'err'); }
     });
 

@@ -1216,6 +1216,7 @@ html[data-theme="light"] .node-card { background: #fff; border-color: var(--bord
 }
 
 /* avatar gallery picker */
+.gallery-overlay { z-index: 250; } /* stacked above parent modal, below toasts */
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
