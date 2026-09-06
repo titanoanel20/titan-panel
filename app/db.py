@@ -86,17 +86,6 @@ CREATE TABLE IF NOT EXISTS nodes (
     created_at   REAL NOT NULL,
     last_seen    REAL
 );
-CREATE TABLE IF NOT EXISTS profiles (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT NOT NULL,
-    is_builtin  INTEGER NOT NULL DEFAULT 0,
-    protocol    TEXT NOT NULL DEFAULT 'vless',
-    transport   TEXT NOT NULL DEFAULT 'ws',
-    security    TEXT NOT NULL DEFAULT 'tls',
-    fingerprint TEXT NOT NULL DEFAULT 'chrome',
-    alpn        TEXT NOT NULL DEFAULT 'http/1.1',
-    created_at  REAL NOT NULL
-);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_users_uid ON users(uid);
 """
@@ -151,35 +140,6 @@ def _ensure_bootstrap():
         hp = _sec.hash_password("")
         set_admin("TiTaN", hp["hash"], hp["salt"])
         set_meta("auth_is_default", "1")
-
-    # seed the three built-in connection profiles (idempotent)
-    _seed_profiles(c)
-
-
-BUILTIN_PROFILES = [
-    {"name": "ولس + وب‌سوکت + TLS", "protocol": "vless", "transport": "ws",
-     "security": "tls", "fingerprint": "chrome", "alpn": "http/1.1"},
-    {"name": "وی‌مس + وب‌سوکت + TLS", "protocol": "vmess", "transport": "ws",
-     "security": "tls", "fingerprint": "chrome", "alpn": "http/1.1"},
-    {"name": "تروجان + وب‌سوکت + TLS", "protocol": "trojan", "transport": "ws",
-     "security": "tls", "fingerprint": "chrome", "alpn": "http/1.1"},
-]
-
-
-def _seed_profiles(c):
-    for p in BUILTIN_PROFILES:
-        row = c.execute(
-            "SELECT id FROM profiles WHERE is_builtin=1 AND protocol=? AND transport=?",
-            (p["protocol"], p["transport"]),
-        ).fetchone()
-        if not row:
-            c.execute(
-                "INSERT INTO profiles(name, is_builtin, protocol, transport, "
-                "security, fingerprint, alpn, created_at) VALUES(?,1,?,?,?,?,?,?)",
-                (p["name"], p["protocol"], p["transport"], p["security"],
-                 p["fingerprint"], p["alpn"], time.time()),
-            )
-    c.commit()
 
 
 def get_meta(key: str) -> str | None:
@@ -254,69 +214,6 @@ def set_setting(key: str, value: Any) -> None:
 def set_settings(mapping: dict) -> None:
     for k, v in mapping.items():
         set_setting(k, v)
-
-
-# ------------------------------------------------------------------ profiles
-def list_profiles() -> list[dict]:
-    with _lock:
-        c = _connect()
-        rows = c.execute("SELECT * FROM profiles ORDER BY is_builtin DESC, id ASC").fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_profile(profile_id: int) -> dict | None:
-    with _lock:
-        c = _connect()
-        row = c.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
-        return dict(row) if row else None
-
-
-def create_profile(data: dict) -> dict:
-    with _lock:
-        c = _connect()
-        cur = c.execute(
-            "INSERT INTO profiles(name, is_builtin, protocol, transport, security, "
-            "fingerprint, alpn, created_at) VALUES(?,0,?,?,?,?,?,?)",
-            (
-                (data.get("name") or "پروفایل").strip()[:64],
-                data.get("protocol", "vless"),
-                data.get("transport", "ws"),
-                data.get("security", "tls"),
-                data.get("fingerprint", "chrome"),
-                data.get("alpn", "http/1.1"),
-                time.time(),
-            ),
-        )
-        c.commit()
-        return get_profile(cur.lastrowid)
-
-
-def update_profile(profile_id: int, fields: dict) -> dict | None:
-    with _lock:
-        c = _connect()
-        p = get_profile(profile_id)
-        if not p or p.get("is_builtin"):
-            return None
-        allowed = ("name", "protocol", "transport", "security", "fingerprint", "alpn")
-        sets, vals = [], []
-        for k in allowed:
-            if k in fields:
-                sets.append(f"{k}=?")
-                vals.append(fields[k])
-        if not sets:
-            return p
-        vals.append(profile_id)
-        c.execute(f"UPDATE profiles SET {', '.join(sets)} WHERE id=? AND is_builtin=0", vals)
-        c.commit()
-        return get_profile(profile_id)
-
-
-def delete_profile(profile_id: int) -> bool:
-    with _lock:
-        c = _connect()
-        cur = c.execute("DELETE FROM profiles WHERE id=? AND is_builtin=0", (profile_id,))
-        c.commit()
-        return cur.rowcount > 0
 
 
 def list_users() -> list[dict]:
