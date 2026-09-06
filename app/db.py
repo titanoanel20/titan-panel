@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
     used_down       INTEGER NOT NULL DEFAULT 0,
     request_count   INTEGER NOT NULL DEFAULT 0,
     max_requests    INTEGER NOT NULL DEFAULT 0,
+    avatar          TEXT NOT NULL DEFAULT '',
     last_seen       REAL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -119,6 +120,9 @@ def _ensure_bootstrap():
     cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
     if "node_id" not in cols:
         c.execute("ALTER TABLE users ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1")
+        c.commit()
+    if "avatar" not in cols:
+        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
         c.commit()
 
     # seed the local node (this server) once
@@ -245,6 +249,7 @@ def create_user(data: dict) -> dict:
             "security", "fingerprint", "alpn", "public_key", "short_id",
             "spider_x", "max_devices", "first_device_uid", "allowed_ips",
             "quota_bytes", "expire_at", "created_at", "max_requests", "node_id",
+            "avatar",
         ]
         now = time.time()
         values = {
@@ -269,6 +274,7 @@ def create_user(data: dict) -> dict:
             "created_at": now,
             "max_requests": int(data.get("max_requests", 0) or 0),
             "node_id": int(data.get("node_id", 1) or 1),
+            "avatar": data.get("avatar", "") or "",
         }
         placeholders = ", ".join("?" for _ in cols)
         c.execute(
@@ -284,7 +290,7 @@ def update_user(uid: str, fields: dict) -> dict | None:
         "name", "note", "enabled", "protocol", "transport", "security",
         "fingerprint", "alpn", "public_key", "short_id", "spider_x",
         "max_devices", "first_device_uid", "quota_bytes", "expire_at",
-        "max_requests", "node_id",
+        "max_requests", "node_id", "avatar",
     }
     with _lock:
         c = _connect()

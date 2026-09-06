@@ -166,6 +166,7 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
     out["status"] = _user_status(u)
     out["used_gb"] = round(out["status"]["used"] / (1024 ** 3), 3)
     out["quota_gb"] = round((u.get("quota_bytes") or 0) / (1024 ** 3), 3)
+    out["avatar_url"] = _resolve_avatar(u.get("avatar") or "")["url"]
     if with_links and request is not None:
         settings = db.get_settings()
         links = build_links(_public_host(request), _link_port(settings), u, settings)
@@ -377,7 +378,7 @@ async def api_me(request: Request):
         "logged_in": bool(user),
         "username": user,
         "settings": settings,
-        "avatar": _avatar_info(settings),
+        "avatar": _resolve_avatar(settings.get("admin_avatar")),
         "app_version": APP_VERSION,
         "default_auth": db.get_meta("auth_is_default") == "1",
     }
@@ -435,64 +436,117 @@ async def api_set_settings(request: Request, _: str = Depends(_require_auth)):
     return {"ok": True, "settings": db.get_settings()}
 
 
-# ------------------------------------------------------------------ admin avatar (profile picture)
-AVATAR_DEFAULTS = ("default-1", "default-2", "default-3")
+# ------------------------------------------------------------------ avatar gallery (profile pictures)
+GALLERY_BUILTIN = ("g1", "g2", "g3", "g4", "g5", "g6")
 
 
-def _custom_avatar_path() -> str:
-    return os.path.join(config.DATA_DIR, "admin_avatar.png")
+def _gallery_upload_dir() -> str:
+    d = os.path.join(config.DATA_DIR, "gallery")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
-def _avatar_info(settings: dict) -> dict:
-    choice = settings.get("admin_avatar") or "default-1"
-    if choice == "custom" and os.path.exists(_custom_avatar_path()):
-        return {"avatar": "custom", "url": "/api/avatar"}
-    if choice not in AVATAR_DEFAULTS:
-        choice = "default-1"
-    return {"avatar": choice, "url": f"/static/img/avatars/{choice}.svg"}
+def _sanitize_avatar_key(key) -> str:
+    """Normalize an avatar key. Returns '' for the default (TiTaN logo)."""
+    key = (key or "").strip()[:128]
+    if not key or key == "titan":
+        return ""
+    if key.startswith("gallery:"):
+        slug = key.split(":", 1)[1]
+        return f"gallery:{slug}" if slug in GALLERY_BUILTIN else ""
+    if key.startswith("upload:"):
+        fname = os.path.basename(key.split(":", 1)[1])
+        return f"upload:{fname}" if fname else ""
+    return ""
 
 
-@app.get("/api/avatar")
-async def api_avatar(_: str = Depends(_require_auth)):
-    """Serve the admin's custom profile picture (defaults are static SVGs)."""
-    settings = db.get_settings()
-    if settings.get("admin_avatar") == "custom" and os.path.exists(_custom_avatar_path()):
-        return FileResponse(_custom_avatar_path(), media_type="image/png",
-                            headers={"Cache-Control": "no-store"})
-    return JSONResponse({"ok": False}, status_code=404)
+def _resolve_avatar(key) -> dict:
+    """Map an avatar key to {key, url}. Default is the TiTaN logo."""
+    key = _sanitize_avatar_key(key)
+    if key.startswith("gallery:"):
+        slug = key.split(":", 1)[1]
+        return {"key": key, "url": f"/static/img/gallery/{slug}.svg"}
+    if key.startswith("upload:"):
+        fname = key.split(":", 1)[1]
+        if os.path.exists(os.path.join(_gallery_upload_dir(), fname)):
+            return {"key": key, "url": f"/api/gallery-image/{fname}"}
+    return {"key": "titan", "url": "/static/img/titan-avatar.svg"}
+
+
+def _gallery_items() -> list:
+    items = [{"id": f"gallery:{s}", "url": f"/static/img/gallery/{s}.svg",
+              "name": s, "builtin": True} for s in GALLERY_BUILTIN]
+    for fname in sorted(os.listdir(_gallery_upload_dir())):
+        if fname.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            items.append({"id": f"upload:{fname}", "url": f"/api/gallery-image/{fname}",
+                          "name": fname, "builtin": False})
+    return items
+
+
+@app.get("/api/gallery")
+async def api_gallery(_: str = Depends(_require_auth)):
+    return {"items": _gallery_items()}
+
+
+@app.get("/api/gallery-image/{fname}")
+async def api_gallery_image(fname: str, _: str = Depends(_require_auth)):
+    fname = os.path.basename(fname)
+    path = os.path.join(_gallery_upload_dir(), fname)
+    if not os.path.exists(path):
+        raise HTTPException(404, "not-found")
+    media = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp"}.get(os.path.splitext(fname)[1].lower(), "image/png")
+    return FileResponse(path, media_type=media, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/gallery")
+async def api_gallery_upload(request: Request, _: str = Depends(_require_auth)):
+    """Upload a picture into the gallery (persisted in the data dir)."""
+    form = await request.form()
+    file = form.get("file")
+    if file is None or not getattr(file, "filename", None):
+        raise HTTPException(400, "no-file")
+    data = await file.read()
+    if len(data) > 4 * 1024 * 1024:
+        raise HTTPException(400, "too-large")
+    try:
+        img = PILImage.open(io.BytesIO(data))
+        img = img.convert("RGB")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "invalid-image")
+    img.thumbnail((512, 512))
+    fname = f"{secrets.token_hex(8)}.png"
+    img.save(os.path.join(_gallery_upload_dir(), fname), "PNG")
+    db.add_event("info", "gallery-upload", fname, ip=_client_ip(request))
+    return {"ok": True, "item": {"id": f"upload:{fname}", "url": f"/api/gallery-image/{fname}",
+                                 "name": fname, "builtin": False}}
+
+
+@app.delete("/api/gallery/{fname}")
+async def api_gallery_delete(fname: str, request: Request, _: str = Depends(_require_auth)):
+    fname = os.path.basename(fname)
+    path = os.path.join(_gallery_upload_dir(), fname)
+    if not os.path.exists(path):
+        raise HTTPException(404, "not-found")
+    os.remove(path)
+    db.add_event("warn", "gallery-delete", fname, ip=_client_ip(request))
+    return {"ok": True}
 
 
 @app.post("/api/admin-avatar")
 async def api_set_admin_avatar(request: Request, _: str = Depends(_require_auth)):
-    """Set the admin profile picture: upload an image, or pick a default."""
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type:
-        form = await request.form()
-        file = form.get("file")
-        if file is None or not getattr(file, "filename", None):
-            raise HTTPException(400, "no-file")
-        data = await file.read()
-        if len(data) > 4 * 1024 * 1024:
-            raise HTTPException(400, "too-large")
-        try:
-            img = PILImage.open(io.BytesIO(data))
-            img = img.convert("RGB")
-        except Exception:  # noqa: BLE001
-            raise HTTPException(400, "invalid-image")
-        img.thumbnail((512, 512))
-        os.makedirs(config.DATA_DIR, exist_ok=True)
-        img.save(_custom_avatar_path(), "PNG")
-        db.set_setting("admin_avatar", "custom")
-        db.add_event("info", "avatar-set", "custom", ip=_client_ip(request))
-        return {"ok": True, "avatar": "custom"}
-
+    """Set the admin's profile picture (TiTaN logo / gallery image / upload)."""
     payload = await request.json()
-    choice = payload.get("avatar")
-    if choice not in AVATAR_DEFAULTS:
+    key = _sanitize_avatar_key(payload.get("avatar"))
+    if key and not key.startswith(("gallery:", "upload:")):
         raise HTTPException(400, "invalid-avatar")
-    db.set_setting("admin_avatar", choice)
-    db.add_event("info", "avatar-set", choice, ip=_client_ip(request))
-    return {"ok": True, "avatar": choice}
+    if key.startswith("upload:"):
+        fname = key.split(":", 1)[1]
+        if not os.path.exists(os.path.join(_gallery_upload_dir(), fname)):
+            raise HTTPException(400, "invalid-avatar")
+    db.set_setting("admin_avatar", key or "titan")
+    db.add_event("info", "avatar-set", key or "titan", ip=_client_ip(request))
+    return {"ok": True, "avatar": _resolve_avatar(key)}
 
 
 # ------------------------------------------------------------------ connection diagnostics
@@ -597,6 +651,7 @@ async def api_create_user(request: Request, _: str = Depends(_require_auth)):
         "expire_at": _expire_from_days(payload.get("expire_days")),
         "max_requests": int(payload.get("max_requests") or 0),
         "node_id": int(payload.get("node_id") or 1),
+        "avatar": _sanitize_avatar_key(payload.get("avatar")),
     }
     user = db.create_user(data)
     _reload_xray()
@@ -624,6 +679,8 @@ async def api_update_user(uid: str, request: Request, _: str = Depends(_require_
               "max_devices", "allowed_ips", "max_requests", "node_id"):
         if k in payload:
             fields[k] = payload[k]
+    if "avatar" in payload:
+        fields["avatar"] = _sanitize_avatar_key(payload.get("avatar"))
     proto = fields.get("protocol", user.get("protocol", "vless"))
     if "transport" in fields or "security" in fields:
         t, s = _normalize_protocol_fields(
@@ -865,6 +922,7 @@ async def api_admin_info(_: str = Depends(_require_auth)):
     return {
         "username": admin["username"] if admin else None,
         "role": "ادمین کل",
+        "avatar": _resolve_avatar(db.get_settings().get("admin_avatar")),
         "created_at": admin["created_at"] if admin else None,
         "last_login": last_login,
         "last_login_ip": next(

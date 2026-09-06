@@ -40,7 +40,7 @@ DEFAULT_SETTINGS = {
     "theme": "dark",
     "public_domain": "",
     "public_port": 443,
-    "admin_avatar": "default-1",
+    "admin_avatar": "titan",
     "default_transport": "ws",
     "default_fingerprint": "chrome",
     "default_alpn": "http/1.1",

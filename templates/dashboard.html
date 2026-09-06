@@ -67,8 +67,8 @@
                   <span class="online-dot"></span>
                 </div>
               </div>
-              <div class="avatar">
-                <img id="adminAvatar" src="/static/img/avatars/default-1.svg" alt="avatar" onerror="this.onerror=null;this.src='/static/img/avatars/default-1.svg';">
+              <div class="avatar" id="adminAvatarBox" title="تغییر تصویر پروفایل">
+                <img id="adminAvatar" src="/static/img/titan-avatar.svg" alt="avatar" onerror="this.onerror=null;this.src='/static/img/titan-avatar.svg';">
               </div>
             </div>
 
@@ -121,9 +121,31 @@
         document.documentElement.setAttribute('data-theme', theme);
         if (me.avatar && me.avatar.url) {
           const img = document.getElementById('adminAvatar');
-          if (img) img.src = me.avatar.url + (me.avatar.avatar === 'custom' ? '?t=' + Date.now() : '');
+          if (img) img.src = me.avatar.url;
         }
         UI.boot();
+
+        // click profile picture -> gallery picker
+        const avatarBox = document.getElementById('adminAvatarBox');
+        if (avatarBox) {
+          avatarBox.style.cursor = 'pointer';
+          avatarBox.title = I18N.t('change_picture');
+          avatarBox.addEventListener('click', async () => {
+            let cur = '';
+            try {
+              const info = await UI.apiJson('/api/admin-info');
+              cur = info && info.avatar && info.avatar.key === 'titan' ? '' : ((info && info.avatar && info.avatar.key) || '');
+            } catch (_) { /* keep '' */ }
+            const key = await UI.openAvatarPicker({ current: cur });
+            if (key == null) return;
+            try {
+              await UI.apiJson('/api/admin-avatar', { method: 'POST', body: JSON.stringify({ avatar: key }) });
+              const img = document.getElementById('adminAvatar');
+              if (img) img.src = UI.avatarUrl(key);
+              UI.toast(I18N.t('avatar_saved'), 'ok');
+            } catch (err) { UI.toast(err.message, 'err'); }
+          });
+        }
       } catch (e) { location.href = '/login'; }
     })();
   </script>
