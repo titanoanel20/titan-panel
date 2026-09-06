@@ -38,6 +38,12 @@
     return (n && n.flag) || '🌐';
   }
 
+  // User's own profile picture (per-user avatar).
+  function userAvatarHtml(u) {
+    const url = (u && u.avatar_url) || avatarUrl((u && u.avatar) || '');
+    return `<span class="user-avatar"><img src="${esc(url)}" alt="" loading="lazy"></span>`;
+  }
+
   function protoTag(p) { return `<span class="tag">${esc((p || '').toUpperCase())}</span>`; }
 
   function badge(label, cls) {
@@ -369,7 +375,7 @@
       const recent = [...users].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 3);
       $('#recentUsers').innerHTML = recent.length ? headUsers + recent.map(u => `
         <div class="user-row">
-          <div class="user-cell"><div class="user-info"><div class="user-avatar"></div>${esc(u.name)}</div></div>
+          <div class="user-cell"><div class="user-info">${userAvatarHtml(u)}${esc(u.name)}</div></div>
           <div class="user-cell traffic">${U.fmtBytes((u.status || {}).used || 0)}</div>
           <div class="user-cell">${badgeOf(u)}</div>
         </div>`).join('') : U.empty('👤', I18N.t('no_users'), '');
@@ -383,7 +389,7 @@
         const n = nodeMap[u.node_id || 1];
         return `
         <div class="config-row">
-          <div class="config-cell config-name">${esc(u.name)}</div>
+          <div class="config-cell config-name"><div class="u-inline">${userAvatarHtml(u)}<span>${esc(u.name)}</span></div></div>
           <div class="config-cell">${esc((u.protocol || '').toUpperCase())}</div>
           <div class="config-cell">${n ? flagHtml(n, 'flag-sm') + '<span class="config-node-name">' + esc((n.city && n.city !== '—') ? n.city : n.name) + '</span>' : '—'}</div>
           <div class="config-cell config-status">${badgeOf(u)}</div>
@@ -467,7 +473,7 @@
       } else {
         tbody.innerHTML = slice.map(u => `
           <tr>
-            <td><div class="cell-main"><span class="cell-title">${esc(u.name)}</span><span class="cell-sub">${esc(u.note || '')}</span></div></td>
+            <td><div class="cell-main"><div class="u-inline">${userAvatarHtml(u)}<span class="cell-title">${esc(u.name)}</span></div><span class="cell-sub">${esc(u.note || '')}</span></div></td>
             <td>${protoTag(u.protocol)}</td>
             <td class="num"><div>${U.fmtBytes((u.status || {}).used || 0)} <span class="cell-sub">/ ${u.quota_gb > 0 ? u.quota_gb + ' GB' : I18N.t('unlimited')}</span></div>${U.usageBar(u)}</td>
             <td>${u.expire_at ? U.fmtDate(u.expire_at) : `<span class="cell-sub">${I18N.t('never')}</span>`}</td>
@@ -601,7 +607,7 @@
         const n = nm[u.node_id || 1];
         return `<tr>
           <td>${statusBadge(u)}</td>
-          <td><div class="cell-main"><span class="cell-title">${esc(u.name)}</span><span class="cell-sub">${esc(u.note || '')}</span></div></td>
+          <td><div class="cell-main"><div class="u-inline">${userAvatarHtml(u)}<span class="cell-title">${esc(u.name)}</span></div><span class="cell-sub">${esc(u.note || '')}</span></div></td>
           <td>${n ? `<span class="node-inline">${flagHtml(n, 'flag-sm')}<span>${esc(n.city && n.city !== '—' ? n.city : n.name)}</span></span>` : '—'}</td>
           <td>${protoTag(u.protocol)}</td>
           <td>${U.fmtDate(u.created_at)}</td>
@@ -891,7 +897,7 @@
         const st = u.status || {};
         const state = st.expired ? badge(I18N.t('expired'), 'warn') : (!u.enabled ? badge(I18N.t('inactive'), 'bad') : badge(I18N.t('enabled'), 'ok'));
         return `<tr>
-          <td><div class="cell-main"><span class="cell-title">${esc(u.name)}</span><span class="cell-sub">${protoTag(u.protocol)}</span></div></td>
+          <td><div class="cell-main"><div class="u-inline">${userAvatarHtml(u)}<span class="cell-title">${esc(u.name)}</span></div><span class="cell-sub">${protoTag(u.protocol)}</span></div></td>
           <td>${state}</td>
           <td>${u.expire_at ? U.fmtDate(u.expire_at) : `<span class="cell-sub">${I18N.t('never')}</span>`}</td>
           <td class="num">${U.fmtBytes(st.used || 0)}</td>

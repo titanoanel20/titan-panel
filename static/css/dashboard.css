@@ -1291,3 +1291,8 @@ html[data-theme="light"] .node-card { background: #fff; border-color: var(--bord
 .node-inline { display: inline-flex; align-items: center; gap: 8px; }
 .config-node-name { margin-left: 8px; vertical-align: middle; }
 html[data-theme="light"] .flag-img { box-shadow: 0 0 0 1px rgba(0, 0, 0, .12); }
+
+/* per-user profile pictures in lists */
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.u-inline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; vertical-align: middle; }
+.u-inline .user-avatar { width: 26px; height: 26px; }
