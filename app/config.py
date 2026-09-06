@@ -63,6 +63,27 @@ IS_NODE = ROLE == "node"
 # Must be identical on every service. If empty, node sync is disabled.
 NODE_SECRET = os.environ.get("TITAN_NODE_SECRET", "")
 
+# Per-node credential issued by the main panel's "Quick node setup" wizard.
+# When set, the node uses it to authenticate itself (register + usage report)
+# and to verify the main panel's sync pushes. Replaces the shared secret.
+NODE_TOKEN = os.environ.get("TITAN_NODE_TOKEN", "")
+
+# The node's own public URL (used to self-register with the main panel).
+# Auto-derived from Railway's injected RAILWAY_PUBLIC_DOMAIN when available.
+def _node_public_url() -> str:
+    d = os.environ.get("TITAN_NODE_URL", "").strip()
+    if d:
+        return d
+    d = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if not d:
+        return ""
+    if d.startswith(("http://", "https://")):
+        return d
+    return "https://" + d
+
+
+NODE_URL = _node_public_url()
+
 # On a node: the public URL of the main panel, e.g. https://panel.example.com
 MAIN_URL = os.environ.get("TITAN_MAIN_URL", "").strip().rstrip("/")
 

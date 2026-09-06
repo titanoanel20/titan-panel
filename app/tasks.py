@@ -191,6 +191,7 @@ def start_background_tasks(app):
         asyncio.create_task(_enrich_node_locations()),
         asyncio.create_task(_sync_nodes_loop()),
         asyncio.create_task(_report_usage_loop()),
+        asyncio.create_task(_register_with_main()),
     ]
     app.state.titan_tasks = tasks
     return tasks
@@ -198,7 +199,7 @@ def start_background_tasks(app):
 
 async def _sync_nodes_loop():
     """Main role: re-push users to remote nodes on an interval (self-healing)."""
-    if config.IS_NODE or not config.NODE_SECRET:
+    if config.IS_NODE:
         return
     await asyncio.sleep(10)
     while True:
@@ -215,7 +216,9 @@ async def _sync_nodes_loop():
 async def _report_usage_loop():
     """Node role: periodically send usage deltas back to the main panel."""
     global _pending_usage
-    if not config.IS_NODE or not config.MAIN_URL or not config.NODE_SECRET:
+    if not config.IS_NODE or not config.MAIN_URL:
+        return
+    if not config.NODE_TOKEN and not config.NODE_SECRET:
         return
     await asyncio.sleep(20)
     while True:
@@ -229,3 +232,25 @@ async def _report_usage_loop():
             break
         except Exception:  # noqa: BLE001
             await asyncio.sleep(10)
+
+
+async def _register_with_main():
+    """Node role: self-register with the main panel until it succeeds."""
+    if not config.IS_NODE or not config.MAIN_URL or not config.NODE_TOKEN:
+        return
+    if not config.NODE_URL:
+        log.warning("TITAN_NODE_URL/RAILWAY_PUBLIC_DOMAIN is empty — "
+                    "generate a domain for the service so the node can register")
+        return
+    from . import nodes as nodesync
+    await asyncio.sleep(6)
+    while True:
+        try:
+            if await nodesync.register(config.MAIN_URL, config.NODE_TOKEN, config.NODE_URL):
+                log.info("node registered with main panel (%s)", config.NODE_URL)
+                return
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            break
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(60)

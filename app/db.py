@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     country      TEXT NOT NULL DEFAULT '',
     country_code TEXT NOT NULL DEFAULT '',
     flag         TEXT NOT NULL DEFAULT '🏳️',
+    token        TEXT NOT NULL DEFAULT '',
     is_local     INTEGER NOT NULL DEFAULT 0,
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   REAL NOT NULL,
@@ -123,6 +124,12 @@ def _ensure_bootstrap():
         c.commit()
     if "avatar" not in cols:
         c.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
+        c.commit()
+
+    # migration: nodes.token (per-node credential issued by the main panel)
+    ncols = [r["name"] for r in c.execute("PRAGMA table_info(nodes)").fetchall()]
+    if "token" not in ncols:
+        c.execute("ALTER TABLE nodes ADD COLUMN token TEXT NOT NULL DEFAULT ''")
         c.commit()
 
     # seed the local node (this server) once
@@ -429,8 +436,8 @@ def create_node(data: dict) -> dict:
     with _lock:
         c = _connect()
         cur = c.execute(
-            "INSERT INTO nodes(name, address, city, country, country_code, flag, "
-            "is_local, enabled, created_at, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO nodes(name, address, city, country, country_code, flag, token, "
+            "is_local, enabled, created_at, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 data.get("name", "Node")[:64],
                 data.get("address", "")[:200],
@@ -438,6 +445,7 @@ def create_node(data: dict) -> dict:
                 data.get("country", "")[:64],
                 data.get("country_code", "")[:2],
                 data.get("flag", "🏳️"),
+                data.get("token", ""),
                 0,
                 1 if data.get("enabled", True) else 0,
                 time.time(),
@@ -446,6 +454,17 @@ def create_node(data: dict) -> dict:
         )
         c.commit()
         return get_node(cur.lastrowid)
+
+
+def get_node_by_token(token: str) -> dict | None:
+    """Find a (remote) node by its per-node credential."""
+    token = (token or "").strip()
+    if not token:
+        return None
+    with _lock:
+        c = _connect()
+        row = c.execute("SELECT * FROM nodes WHERE token=? AND is_local=0", (token,)).fetchone()
+        return dict(row) if row else None
 
 
 def update_node(node_id: int, fields: dict) -> dict | None:

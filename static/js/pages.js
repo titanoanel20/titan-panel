@@ -784,7 +784,10 @@
     view.innerHTML = `
       <div class="page-head">
         <div><h1 class="page-title" data-i18n="nodes_title"></h1><p class="page-sub" data-i18n="nodes_sub"></p></div>
-        <div class="page-actions"><button class="btn primary" id="addNodeBtn">${ICONS.plus}<span data-i18n="add_node"></span></button></div>
+        <div class="page-actions">
+          <button class="btn primary" id="autoNodeBtn">${ICONS.plus}<span data-i18n="node_add_auto"></span></button>
+          <button class="btn" id="addNodeBtn">${ICONS.plus}<span data-i18n="add_node"></span></button>
+        </div>
       </div>
       <div class="grid grid-3" id="nodesGrid">${U.skeleton(6)}</div>`;
 
@@ -847,7 +850,75 @@
       }
     });
     $('#addNodeBtn').addEventListener('click', () => openNodeForm(null));
+    $('#autoNodeBtn').addEventListener('click', () => openNodeInvite());
     await load();
+  }
+
+  // Quick node setup: panel issues a token; the node self-registers with it.
+  async function openNodeInvite() {
+    let token = '';
+    let nodeId = null;
+    const origin = location.origin;
+    const m = U.modal({
+      title: I18N.t('node_auto_title'),
+      lg: true,
+      body: `
+        <label class="field"><span class="field-label" data-i18n="name"></span>
+          <input class="input" id="inviteName" data-i18n-ph="node_name_hint"></label>
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn primary" id="inviteGen">${I18N.t('node_invite_gen')}</button>
+        </div>
+        <div id="inviteBody" class="hidden" style="margin-top:14px">
+          <div class="cell-sub" data-i18n="node_invite_steps"></div>
+          <ol style="margin:8px 0 14px;padding-inline-start:20px;line-height:1.7">
+            <li data-i18n="node_step1"></li>
+            <li data-i18n="node_step2"></li>
+            <li data-i18n="node_step3"></li>
+          </ol>
+          <label class="field"><span class="field-label">TITAN_ROLE</span>
+            <input class="input" value="node" readonly dir="ltr"></label>
+          <label class="field"><span class="field-label">TITAN_MAIN_URL</span>
+            <div class="row" style="gap:8px"><input class="input grow" id="inviteMainUrl" value="${esc(origin)}" readonly dir="ltr"><button class="btn sm" id="copyMain">${I18N.t('copy')}</button></div></label>
+          <label class="field"><span class="field-label">TITAN_NODE_TOKEN</span>
+            <div class="row" style="gap:8px"><input class="input grow" id="inviteToken" value="${esc(token)}" readonly dir="ltr"><button class="btn sm" id="copyToken">${I18N.t('copy')}</button></div></label>
+          <div class="row" style="gap:8px;margin-top:12px">
+            <button class="btn" id="copyAll">${I18N.t('node_copy_all')}</button>
+            <button class="btn primary" id="inviteCheck">${I18N.t('node_check')}</button>
+          </div>
+          <div class="cell-sub mt" id="inviteStatus" style="margin-top:12px"></div>
+        </div>`,
+      foot: `<button class="btn" data-close>${I18N.t('close')}</button>`,
+    });
+    I18N.apply();
+
+    const varsText = () => `TITAN_ROLE=node\nTITAN_MAIN_URL=${origin}\nTITAN_NODE_TOKEN=${token}`;
+    m.query('#inviteGen').addEventListener('click', async () => {
+      const name = m.query('#inviteName').value.trim() || 'Node';
+      try {
+        const r = await U.apiJson('/api/nodes/invite', { method: 'POST', body: JSON.stringify({ name }) });
+        token = r.token;
+        nodeId = r.node && r.node.id;
+        m.query('#inviteToken').value = token;
+        m.query('#inviteBody').classList.remove('hidden');
+        I18N.apply();
+      } catch (e) { U.toast(I18N.t('node_gen_fail'), 'err'); }
+    });
+    m.query('#copyMain').addEventListener('click', () => { U.copyText(origin); U.toast(I18N.t('copied'), 'ok'); });
+    m.query('#copyToken').addEventListener('click', () => { U.copyText(token); U.toast(I18N.t('copied'), 'ok'); });
+    m.query('#copyAll').addEventListener('click', () => { U.copyText(varsText()); U.toast(I18N.t('copied'), 'ok'); });
+    m.query('#inviteCheck').addEventListener('click', async () => {
+      const st = m.query('#inviteStatus');
+      try {
+        const nodes = (await U.apiJson('/api/nodes')).nodes || [];
+        const n = nodes.find(x => x.id === nodeId);
+        if (n && n.address) {
+          st.innerHTML = `${I18N.t('node_registered')} — ${flagHtml(n, 'flag-sm')} ${esc(n.country || n.address)}`;
+          if (U.current === 'nodes') U.render();
+        } else {
+          st.textContent = I18N.t('node_waiting');
+        }
+      } catch (e) { st.textContent = e.message; }
+    });
   }
 
   function openNodeView(node) {

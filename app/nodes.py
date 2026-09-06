@@ -7,8 +7,11 @@ Two roles share one codebase (see config.ROLE):
 - **node**: runs Xray for the users the main panel pushed to it, and reports
   their traffic usage back to the main panel.
 
-All node <-> main traffic is authenticated with a shared secret
-(config.NODE_SECRET) and happens over HTTPS in production.
+Authentication is either a shared secret (TITAN_NODE_SECRET, legacy/simple) or
+a per-node token issued by the main panel's "Quick node setup" wizard
+(TITAN_NODE_TOKEN on the node side). With a token, a node can self-register:
+it reports its own public URL to the main panel, so the admin never has to copy
+domains around or keep a shared secret in sync.
 """
 import hashlib
 import json
@@ -29,11 +32,22 @@ SYNC_FIELDS = (
 )
 
 
-def secret_ok(secret: str) -> bool:
-    """Constant-time check of the shared node secret."""
-    if not config.NODE_SECRET:
-        return False
-    return secrets.compare_digest(str(secret or ""), config.NODE_SECRET)
+def _matches(a: str, b: str) -> bool:
+    return bool(b) and secrets.compare_digest(str(a or ""), str(b))
+
+
+def secret_valid_for_node(secret: str) -> bool:
+    """Node side: accept a sync push from the main panel."""
+    if _matches(secret, config.NODE_SECRET):
+        return True
+    return _matches(secret, config.NODE_TOKEN)
+
+
+def secret_valid_for_main(secret: str) -> bool:
+    """Main side: accept a report/registration from a node."""
+    if _matches(secret, config.NODE_SECRET):
+        return True
+    return db.get_node_by_token(secret) is not None
 
 
 def user_sync_payload(u: dict) -> dict:
@@ -50,6 +64,11 @@ def _node_url(node: dict) -> str | None:
     if not addr.startswith(("http://", "https://")):
         addr = "https://" + addr
     return addr.rstrip("/")
+
+
+def _sync_secret(node: dict) -> str:
+    """Credential the main panel presents when pushing to a node."""
+    return node.get("token") or config.NODE_SECRET
 
 
 def _payload_hash(users: list[dict]) -> str:
@@ -75,10 +94,10 @@ def _reality_payload() -> dict | None:
 async def sync_node(node: dict, users: list[dict], timeout: float = 8.0) -> bool:
     """Push a node's full user list to it. Returns True on success."""
     url = _node_url(node)
-    if not url or not config.NODE_SECRET:
+    if not url or not _sync_secret(node):
         return False
     payload = {
-        "secret": config.NODE_SECRET,
+        "secret": _sync_secret(node),
         "users": [user_sync_payload(u) for u in users],
         "reality": _reality_payload(),
     }
@@ -97,14 +116,14 @@ async def sync_node(node: dict, users: list[dict], timeout: float = 8.0) -> bool
 async def sync_all() -> dict[str, bool]:
     """Push users to every remote node (main role). Returns {node_name: ok}."""
     results: dict[str, bool] = {}
-    if not config.NODE_SECRET:
-        return results
     users = db.list_users()
     by_node: dict[int, list] = {}
     for u in users:
         by_node.setdefault(int(u.get("node_id") or 1), []).append(u)
     for node in db.list_nodes():
         if node.get("is_local") or not node.get("enabled"):
+            continue
+        if not node.get("token") and not config.NODE_SECRET:
             continue
         node_users = sorted(by_node.get(node["id"], []), key=lambda x: x["uid"])
         # skip re-push when nothing changed since the last successful sync
@@ -122,13 +141,28 @@ async def sync_all() -> dict[str, bool]:
 
 async def report_usage(usage: dict[str, dict], timeout: float = 8.0) -> bool:
     """Send per-user traffic deltas back to the main panel (node role)."""
-    if not config.MAIN_URL or not config.NODE_SECRET or not usage:
+    secret = config.NODE_TOKEN or config.NODE_SECRET
+    if not config.MAIN_URL or not secret or not usage:
         return False
-    payload = {"secret": config.NODE_SECRET, "usage": usage}
+    payload = {"secret": secret, "usage": usage}
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as cl:
             r = await cl.post(f"{config.MAIN_URL}/api/node/usage", json=payload)
             return r.status_code == 200
     except Exception as e:  # noqa: BLE001
         log.warning("usage report failed: %s", e)
+        return False
+
+
+async def register(main_url: str, token: str, url: str, timeout: float = 8.0) -> bool:
+    """Node side: self-register with the main panel using its token + URL."""
+    if not main_url or not token or not url:
+        return False
+    payload = {"token": token, "url": url}
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as cl:
+            r = await cl.post(f"{main_url}/api/node/register", json=payload)
+            return r.status_code == 200
+    except Exception as e:  # noqa: BLE001
+        log.warning("node register failed: %s", e)
         return False

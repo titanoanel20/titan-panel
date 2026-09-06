@@ -299,6 +299,7 @@ async def _node_status(node: dict) -> dict:
 
 def _serialize_node(node: dict, status: dict) -> dict:
     out = dict(node)
+    out.pop("token", None)  # never expose a node credential to the frontend
     out["status"] = status
     out["version"] = APP_VERSION if node.get("is_local") else None
     return out
@@ -875,8 +876,6 @@ def _reload_xray():
 
 def _trigger_node_sync():
     """Push user changes to remote nodes without blocking the request."""
-    if not config.NODE_SECRET:
-        return
     try:
         asyncio.create_task(nodesync.sync_all())
     except Exception:  # noqa: BLE001
@@ -1034,7 +1033,7 @@ async def api_node_sync(request: Request):
     """Node side: receive the full list of users assigned to this node and
     reconcile the local database + Xray config to match. Secret protected."""
     payload = await request.json()
-    if not nodesync.secret_ok(payload.get("secret")):
+    if not nodesync.secret_valid_for_node(payload.get("secret")):
         raise HTTPException(401, "bad-secret")
     if payload.get("reality"):
         reality.apply_reality_config(payload["reality"])
@@ -1070,7 +1069,7 @@ async def api_node_sync(request: Request):
 async def api_node_usage(request: Request):
     """Main side: receive traffic deltas reported by a node and merge them."""
     payload = await request.json()
-    if not nodesync.secret_ok(payload.get("secret")):
+    if not nodesync.secret_valid_for_main(payload.get("secret")):
         raise HTTPException(401, "bad-secret")
     usage = payload.get("usage") or {}
     count = 0
@@ -1084,6 +1083,55 @@ async def api_node_usage(request: Request):
             db.touch_last_seen(uid)
             count += 1
     return {"ok": True, "merged": count}
+
+
+@app.post("/api/node/register")
+async def api_node_register(request: Request):
+    """Main side: a node self-registers with its token, announcing its public
+    URL. The main panel fills the node's address and auto-detects country."""
+    payload = await request.json()
+    token = str(payload.get("token") or "")
+    url = str(payload.get("url") or "")
+    node = db.get_node_by_token(token)
+    if not node:
+        raise HTTPException(401, "bad-token")
+    url = _clean_public_url(url)
+    if not url:
+        raise HTTPException(400, "missing-url")
+    fields = {"address": url}
+    host = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", url)
+    host = host.split("/", 1)[0].rsplit("@", 1)[-1].split(":")[0].strip("[]")
+    if host:
+        loc = await asyncio.to_thread(detect_location, host)
+        if loc:
+            fields["city"] = loc.get("city", "")[:64]
+            fields["country"] = loc.get("country", "")[:64]
+            fields["country_code"] = loc.get("country_code", "")[:2]
+            fields["flag"] = loc.get("flag", "🏳️")
+    db.update_node(node["id"], fields)
+    _trigger_node_sync()
+    db.add_event("info", "node-register", f"{node['name']} -> {url}", ip=_client_ip(request))
+    return {"ok": True, "node": _serialize_node(db.get_node(node["id"]), await _node_status(node))}
+
+
+@app.post("/api/nodes/invite")
+async def api_invite_node(request: Request, _: str = Depends(_require_auth)):
+    """Main side: issue a one-time credential for a new node (quick setup)."""
+    payload = await request.json()
+    name = (payload.get("name") or "Node").strip()[:64] or "Node"
+    token = secrets.token_hex(16)
+    node = db.create_node({"name": name, "token": token, "enabled": True})
+    db.add_event("info", "node-invite", name, ip=_client_ip(request))
+    return {"ok": True, "token": token, "node": _serialize_node(node, await _node_status(node))}
+
+
+def _clean_public_url(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith(("http://", "https://")):
+        raw = "https://" + raw
+    return raw.rstrip("/")
 
 
 # ------------------------------------------------------------------ subscriptions
