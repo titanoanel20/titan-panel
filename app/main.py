@@ -360,30 +360,45 @@ async def _node_status(node: dict) -> dict:
             # node never registered / no address yet — nothing to probe
             data["reason"] = "no-address"
         else:
-            url = addr if addr.startswith(("http://", "https://")) else "https://" + addr
-            try:
-                async with httpx.AsyncClient(timeout=_REMOTE_PROBE_TIMEOUT, follow_redirects=True) as cl:
-                    t0 = time.time()
-                    r = await cl.get(url.rstrip("/") + "/health")
-                    lat = (time.time() - t0) * 1000
-                data["online"] = r.status_code in (200, 401, 404)
-                data["latency_ms"] = round(lat)
-                if not data["online"]:
-                    # e.g. 502/503 while the node app is starting or crashed
-                    data["reason"] = f"http-{r.status_code}"
-                # learn the node's WireGuard public key + live user count
+            # Try https first, then http, so an address works whether or not the
+            # admin typed a scheme (Railway domains are https-only; a bare host
+            # must be probed with https, while http-only setups still work too).
+            schemes = ["https://", "http://"]
+            body = addr
+            if addr.startswith("https://"):
+                body = addr[len("https://"):]
+            elif addr.startswith("http://"):
+                schemes = ["http://", "https://"]
+                body = addr[len("http://"):]
+            body = body.split("/", 1)[0].rsplit("@", 1)[-1].strip().strip("[]")
+            for scheme in schemes:
+                url = f"{scheme}{body}/health"
                 try:
-                    body = r.json()
-                    remote_pub = (body.get("wg_pub") or "").strip()
-                    if remote_pub and remote_pub != (node.get("wg_pub") or ""):
-                        db.update_node(node["id"], {"wg_pub": remote_pub})
-                    if isinstance(body.get("users"), int):
-                        data["users_count"] = body["users"]
-                except Exception:  # noqa: BLE001
-                    pass
-            except Exception as e:  # noqa: BLE001
-                data["online"] = False
-                data["reason"] = type(e).__name__ or "error"
+                    async with httpx.AsyncClient(timeout=_REMOTE_PROBE_TIMEOUT, follow_redirects=True) as cl:
+                        t0 = time.time()
+                        r = await cl.get(url)
+                        lat = (time.time() - t0) * 1000
+                    data["online"] = r.status_code in (200, 401, 404)
+                    data["latency_ms"] = round(lat)
+                    if not data["online"]:
+                        # e.g. 502/503 while the node app is starting or crashed
+                        data["reason"] = f"http-{r.status_code}"
+                    # learn the node's WireGuard public key + live user count
+                    try:
+                        rbody = r.json()
+                        remote_pub = (rbody.get("wg_pub") or "").strip()
+                        if remote_pub and remote_pub != (node.get("wg_pub") or ""):
+                            db.update_node(node["id"], {"wg_pub": remote_pub})
+                        if isinstance(rbody.get("users"), int):
+                            data["users_count"] = rbody["users"]
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break  # got an HTTP response; no need to try other schemes
+                except Exception as e:  # noqa: BLE001
+                    data["online"] = False
+                    data["reason"] = type(e).__name__ or "error"
+            if data["online"]:
+                data["reason"] = ""  # reached via a fallback scheme — healthy
     _node_status_cache[node["id"]] = {"ts": now, "data": data}
     _node_latency_snap[node["id"]] = data["latency_ms"]
     return data
@@ -1131,13 +1146,38 @@ async def api_list_nodes(_: str = Depends(_require_auth)):
     return {"nodes": [_serialize_node(n, s) for n, s in zip(db_nodes, statuses)]}
 
 
+def _normalize_node_address(raw: str) -> str:
+    """Canonicalize a node address to 'https://host[:port]'.
+
+    Accepts any of: 'domain', 'https://domain/', 'https://domain/path',
+    'domain:8443', 'http://user@domain', … and stores a clean origin so the
+    health probe, sync and link building all agree. Explicit 'http://' is
+    preserved; everything else defaults to 'https://'.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("http://"):
+        scheme, raw = "http://", raw[len("http://"):]
+    elif raw.startswith("https://"):
+        scheme, raw = "https://", raw[len("https://"):]
+    else:
+        scheme = "https://"
+    raw = raw.split("/", 1)[0]      # drop path / query / fragment
+    raw = raw.rsplit("@", 1)[-1]    # drop any userinfo
+    raw = raw.strip().strip("[]")
+    if not raw:
+        return ""
+    return scheme + raw
+
+
 @app.post("/api/nodes")
 async def api_create_node(request: Request, _: str = Depends(_require_auth)):
     payload = await request.json()
     name = (payload.get("name") or "").strip()[:64]
     if not name:
         raise HTTPException(400, "name-required")
-    address = (payload.get("address") or "").strip()[:200]
+    address = _normalize_node_address(payload.get("address") or "")
     cc = (payload.get("country_code") or "").strip()[:2].upper()
     # auto-detect country/flag when the admin didn't set one but gave an address
     loc = {}
@@ -1169,6 +1209,8 @@ async def api_update_node(node_id: int, request: Request, _: str = Depends(_requ
     for k in ("name", "address", "city", "country", "country_code", "flag", "enabled"):
         if k in payload:
             fields[k] = payload[k]
+    if "address" in fields:
+        fields["address"] = _normalize_node_address(fields.get("address") or "")
     # auto-detect country/flag if an address is given and none is known
     if "address" in fields and fields.get("address") and not fields.get("country_code") \
             and not fields.get("flag") and not node.get("country_code"):
@@ -1388,12 +1430,7 @@ async def api_invite_node(request: Request, _: str = Depends(_require_auth)):
 
 
 def _clean_public_url(raw: str) -> str:
-    raw = (raw or "").strip()
-    if not raw:
-        return ""
-    if not raw.startswith(("http://", "https://")):
-        raw = "https://" + raw
-    return raw.rstrip("/")
+    return _normalize_node_address(raw)
 
 
 # ------------------------------------------------------------------ subscriptions

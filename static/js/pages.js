@@ -1085,7 +1085,7 @@
       body: `
         <form id="nodeForm">
           <label class="field"><span class="field-label" data-i18n="name"></span><input class="input" name="name" value="${esc(node?.name || '')}" required></label>
-          <label class="field"><span class="field-label" data-i18n="address"></span><input class="input" name="address" value="${esc(node?.address || '')}" dir="ltr" placeholder="https://example.com"></label>
+          <label class="field"><span class="field-label" data-i18n="address"></span><input class="input" name="address" value="${esc(node?.address || '')}" dir="ltr" placeholder="your-node.up.railway.app"><div class="cell-sub" style="margin-top:4px" data-i18n="node_addr_hint"></div></label>
           <div class="grid-form">
             <label class="field"><span class="field-label" data-i18n="city"></span><input class="input" name="city" value="${esc(node?.city || '')}"></label>
             <label class="field"><span class="field-label" data-i18n="country"></span><input class="input" name="country" value="${esc(node?.country || '')}"></label>
