@@ -1150,8 +1150,8 @@ def _normalize_node_address(raw: str) -> str:
     """Canonicalize a node address to 'https://host[:port]'.
 
     Accepts any of: 'domain', 'https://domain/', 'https://domain/path',
-    'domain:8443', 'http://user@domain', … and stores a clean origin so the
-    health probe, sync and link building all agree. Explicit 'http://' is
+    'domain:8443', 'http://user@domain', '[IPv6]:port', … and stores a clean origin
+    so the health probe, sync and link building all agree. Explicit 'http://' is
     preserved; everything else defaults to 'https://'.
     """
     raw = (raw or "").strip()
@@ -1165,7 +1165,12 @@ def _normalize_node_address(raw: str) -> str:
         scheme = "https://"
     raw = raw.split("/", 1)[0]      # drop path / query / fragment
     raw = raw.rsplit("@", 1)[-1]    # drop any userinfo
-    raw = raw.strip().strip("[]")
+    # Strip brackets for IPv6: [::1] or [::1]:port -> ::1 or ::1:port
+    # Handle cases like [::1]:port or [::1]
+    while raw.startswith("[") and "]" in raw:
+        i = raw.index("]")
+        raw = raw[1:i] + raw[i+1:]
+    raw = raw.strip("[]")
     if not raw:
         return ""
     return scheme + raw
