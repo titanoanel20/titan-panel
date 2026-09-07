@@ -62,6 +62,15 @@
     return st.online ? badge(I18N.t('online'), 'ok') : badge(I18N.t('offline'), 'bad');
   }
 
+  // Human-readable reason for an offline node (from the /health probe).
+  function offlineReason(st) {
+    const r = st.reason || '';
+    if (r === 'no-address') return I18N.t('node_no_address');
+    if (r.indexOf('http-') === 0) return 'HTTP ' + r.slice(5);
+    if (r) return r;
+    return I18N.t('offline');
+  }
+
   // ---------------- avatar gallery ----------------
   function avatarUrl(key) {
     key = key || '';
@@ -878,6 +887,12 @@
       $('#nodesGrid').innerHTML = nodes.length ? nodes.map(n => {
         const st = n.status || {};
         const sync = n.sync || {};
+        const reason = !n.is_local && !st.online ? offlineReason(st) : '';
+        const statusLine = !n.is_local ? `
+          <div class="cell-sub" style="margin-bottom:10px">
+            <span data-i18n="address"></span>: <span dir="ltr">${esc(n.address || '—')}</span>
+            ${reason ? `<span style="color:var(--red)"> · ${reason}</span>` : ''}
+          </div>` : '';
         const syncLine = !n.is_local ? `
           <div class="cell-sub" style="margin-bottom:10px">
             <span data-i18n="node_sync_users"></span>: <b>${sync.on_node != null ? sync.on_node : '—'}</b> / ${sync.expected != null ? sync.expected : '—'}
@@ -903,6 +918,7 @@
             <span class="cell-sub">${I18N.t('version')}: ${esc(n.version || '—')}</span>
             <span class="cell-sub">${I18N.t('last_seen')}: ${U.fmtDateTime(n.last_seen)}</span>
           </div>
+          ${statusLine}
           ${syncLine}
           <div class="row" style="gap:8px;flex-wrap:wrap">
             <button class="btn sm" data-act="view" data-id="${n.id}">${ICONS.eye}<span data-i18n="node_view"></span></button>
@@ -1054,6 +1070,7 @@
           <div><span class="cell-sub">${I18N.t('address')}:</span> <span dir="ltr">${esc(node.address || '—')}</span></div>
           <div><span class="cell-sub">${I18N.t('version')}:</span> ${esc(node.version || '—')}</div>
           <div><span class="cell-sub">${I18N.t('last_seen')}:</span> ${U.fmtDateTime(node.last_seen)}</div>
+          ${!node.is_local && !st.online ? `<div style="grid-column:1/-1"><span class="cell-sub">${I18N.t('reason')}:</span> <span style="color:var(--red)">${offlineReason(st)}</span></div>` : ''}
         </div>`,
       foot: `<button class="btn" data-close>${I18N.t('close')}</button>`,
     });

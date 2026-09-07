@@ -346,7 +346,7 @@ async def _node_status(node: dict) -> dict:
         return cached["data"]
 
     data = {"online": False, "latency_ms": None, "cpu": None, "ram": None, "disk": None,
-            "users_count": None}
+            "users_count": None, "reason": ""}
     if node.get("is_local"):
         data["online"] = True
         data["cpu"] = psutil.cpu_percent(interval=0.1)
@@ -356,8 +356,11 @@ async def _node_status(node: dict) -> dict:
         data["users_count"] = len(db.list_users())
     else:
         addr = (node.get("address") or "").strip()
-        if addr:
-            url = addr if addr.startswith(("http://", "https://")) else "http://" + addr
+        if not addr:
+            # node never registered / no address yet — nothing to probe
+            data["reason"] = "no-address"
+        else:
+            url = addr if addr.startswith(("http://", "https://")) else "https://" + addr
             try:
                 async with httpx.AsyncClient(timeout=_REMOTE_PROBE_TIMEOUT, follow_redirects=True) as cl:
                     t0 = time.time()
@@ -365,6 +368,9 @@ async def _node_status(node: dict) -> dict:
                     lat = (time.time() - t0) * 1000
                 data["online"] = r.status_code in (200, 401, 404)
                 data["latency_ms"] = round(lat)
+                if not data["online"]:
+                    # e.g. 502/503 while the node app is starting or crashed
+                    data["reason"] = f"http-{r.status_code}"
                 # learn the node's WireGuard public key + live user count
                 try:
                     body = r.json()
@@ -375,8 +381,9 @@ async def _node_status(node: dict) -> dict:
                         data["users_count"] = body["users"]
                 except Exception:  # noqa: BLE001
                     pass
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 data["online"] = False
+                data["reason"] = type(e).__name__ or "error"
     _node_status_cache[node["id"]] = {"ts": now, "data": data}
     _node_latency_snap[node["id"]] = data["latency_ms"]
     return data
