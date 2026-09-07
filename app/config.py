@@ -173,6 +173,7 @@ DEFAULT_SETTINGS = {
     "backup_interval_hours": 24,
     # reality (VLESS) — public values, filled when the keypair is generated
     "reality_pub": "",
+    "reality_enabled": False,
     "reality_sid": "",
     "reality_sni": "",
     "reality_dest": "",
