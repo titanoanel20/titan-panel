@@ -1179,20 +1179,22 @@ async def api_create_node(request: Request, _: str = Depends(_require_auth)):
         raise HTTPException(400, "name-required")
     address = _normalize_node_address(payload.get("address") or "")
     cc = (payload.get("country_code") or "").strip()[:2].upper()
-    # auto-detect country/flag when the admin didn't set one but gave an address
+    # NOTE: auto-detection is intentionally disabled here because it often resolves
+    # Railway domains to US (via ip-api.com). Admins should set country_code/flag manually
+    # or use the node edit form to override. This avoids the node being auto-set to USA.
     loc = {}
-    if not cc and address:
-        loc = await asyncio.to_thread(detect_location, address)
+    # if not cc and address:
+    #     loc = await asyncio.to_thread(detect_location, address)
     # Manual nodes also get a per-node token so sync works without a shared
     # TITAN_NODE_SECRET; the token is returned once (never re-serialized).
     token = secrets.token_hex(16)
     node = db.create_node({
         "name": name,
         "address": address,
-        "city": (payload.get("city") or loc.get("city") or "").strip()[:64],
-        "country": (payload.get("country") or loc.get("country") or "").strip()[:64],
-        "country_code": cc or loc.get("country_code", ""),
-        "flag": payload.get("flag") or _flag_for(cc or loc.get("country_code")),
+        "city": (payload.get("city") or "").strip()[:64],
+        "country": (payload.get("country") or "").strip()[:64],
+        "country_code": cc,
+        "flag": payload.get("flag") or _flag_for(cc),
         "token": token,
     })
     db.add_event("info", "node-create", name, ip=_client_ip(request))
@@ -1214,6 +1216,8 @@ async def api_update_node(node_id: int, request: Request, _: str = Depends(_requ
     # auto-detect country/flag if an address is given and none is known
     if "address" in fields and fields.get("address") and not fields.get("country_code") \
             and not fields.get("flag") and not node.get("country_code"):
+        # Only auto-detect if the user hasn't explicitly set a country code yet.
+        # This prevents overwriting a manual selection on re-edits.
         loc = await asyncio.to_thread(detect_location, fields["address"])
         if loc:
             fields.setdefault("city", loc["city"])
