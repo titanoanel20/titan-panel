@@ -1404,7 +1404,11 @@
         rawRow(I18N.t('raw_endpoint'), `<span dir="ltr">${esc(t.endpoint || I18N.t('raw_none'))}</span>`, !!t.endpoint) +
         rawRow(I18N.t('raw_source'), esc(t.source || '—'), null) +
         rawRow(I18N.t('raw_listening'), `${mark(!!t.raw_entry_listening)} <span dir="ltr">:${esc(t.raw_entry_port || '—')}</span>`, !!t.raw_entry_listening) +
-        rawRow(I18N.t('raw_key_source'), `${esc((d.reality || {}).key_source || 'none')} · ${esc(((d.reality || {}).public_key || '').slice(0, 10))}…`, (d.reality || {}).key_source === 'pinned') +
+        rawRow(I18N.t('raw_key_source'),
+          `${esc((d.reality || {}).key_source || 'none')} · ${esc(((d.reality || {}).public_key || '').slice(0, 10))}… · ` +
+          `${(d.reality || {}).enabled ? I18N.t('raw_reality_served') : I18N.t('raw_reality_unserved')}` +
+          ` (${esc((d.reality || {}).reality_users || 0)})`,
+          (d.reality || {}).key_source === 'pinned' && (d.reality || {}).enabled) +
         rawRow(I18N.t('raw_roundtrip'), `${mark(rt.round_trip_ok === true ? true : rt.checked ? false : null)}${rt.detail ? `<div class="cell-sub" dir="ltr">${esc(rt.detail)}</div>` : ''}`, rt.round_trip_ok === true) +
         ((d.warnings || []).map(w => `<div class="cell-sub" style="color:var(--amber);margin-top:6px">${esc(w)}</div>`).join(''));
       I18N.apply();

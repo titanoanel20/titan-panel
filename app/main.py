@@ -457,7 +457,18 @@ async def _network_report(settings: dict) -> dict:
             "$PORT), set PANEL_PORT to that port - Reality/TLS keep working on their own "
             "inbounds, but the panel and its diagnostics become unreachable that way.")
     reality_ready = bool(db.get_meta("reality_priv"))
-    if not reality_ready:
+    # xray.write_xray_config() serves Reality iff a keypair exists *and* someone uses it.
+    # `reality_enabled` is a stored flag the generator never reads, so the report must not
+    # claim "disabled" while real Reality clients are connecting (that cost me an hour of
+    # debugging in the preview: enabled=false, links perfectly alive).
+    reality_users = sum(1 for u in db.list_users()
+                        if (u.get("security") or "").lower() == "reality")
+    if reality_users and not reality_ready:
+        warnings.append(
+            f"{reality_users} user(s) already hold Reality links but this server has no "
+            "keypair, so nothing answers that handshake. Pin a key (or let the panel "
+            "generate one when Xray is installed), then rebuild those links.")
+    elif not reality_ready:
         warnings.append(
             "Reality has no keypair yet, so raw links fall back to TLS/plain. "
             "Reality is what makes a config survive operator DPI.")
@@ -485,7 +496,10 @@ async def _network_report(settings: dict) -> dict:
             "stats": router.stats() if router is not None else None,
         },
         "reality": {
-            "enabled": bool(settings.get("reality_enabled")) and reality_ready,
+            "enabled": bool(reality_ready and reality_users),
+            "keypair": reality_ready,
+            "reality_users": reality_users,
+            "reality_enabled_setting": bool(settings.get("reality_enabled")),
             "key_source": reality.key_source(),
             "public_key": db.get_meta("reality_pub") or settings.get("reality_pub") or "",
             "sni": _reality_snis(settings),

@@ -531,3 +531,60 @@ def test_report_names_the_dead_http_target(admin, monkeypatch):
     hits = [w for w in d["warnings"] if str(dead_port) in w and "PANEL_PORT" in w]
     assert hits, d["warnings"]
     assert d["round_trip"]["checked"] is True and d["round_trip"]["round_trip_ok"] is False
+
+
+def test_reality_report_matches_what_xray_actually_serves(admin, db):
+    """The inbound exists iff a keypair exists and someone uses Reality. The stored
+    `reality_enabled` flag is not read by the config generator, so reporting it as
+    the serving state makes a working panel look broken."""
+    metas = ("reality_priv", "reality_pub")
+    saved = {k: db.get_meta(k) for k in metas}
+    c = db._connect()
+    try:
+        db.set_meta("reality_priv", "PRIV")
+        db.set_meta("reality_pub", "PUB")
+        r = admin.post("/api/users", json={"name": "serving", "protocol": "vless", "transport": "tcp",
+                                           "security": "reality", "quota_gb": 1},
+                       headers={"Origin": "http://testserver"})
+        uid = r.json()["user"]["uid"]
+        try:
+            d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
+            assert d["reality"]["enabled"] is True, d["reality"]
+            assert d["reality"]["reality_users"] >= 1
+            assert d["reality"]["keypair"] is True
+            assert d["reality"]["reality_enabled_setting"] in (True, False)  # stored flag, unused
+        finally:
+            admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                c.execute("DELETE FROM meta WHERE key=?", (k,))   # meta.value is NOT NULL
+            else:
+                db.set_meta(k, v)
+        c.commit()
+
+
+def test_reality_users_without_a_keypair_are_reported_as_dead(admin, db):
+    metas = ("reality_priv", "reality_pub")
+    saved = {k: db.get_meta(k) for k in metas}
+    c = db._connect()
+    for k in metas:
+        c.execute("DELETE FROM meta WHERE key=?", (k,))
+    c.commit()
+    r = admin.post("/api/users", json={"name": "orphan", "protocol": "vless", "transport": "tcp",
+                                       "security": "reality", "quota_gb": 1},
+                   headers={"Origin": "http://testserver"})
+    uid = r.json()["user"]["uid"]
+    try:
+        d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
+        assert d["reality"]["enabled"] is False and d["reality"]["keypair"] is False
+        hits = [w for w in d["warnings"] if "no keypair" in w]
+        assert hits and hits[0].startswith("1 user"), d["warnings"]
+    finally:
+        admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
+        for k, v in saved.items():
+            if v is None:
+                c.execute("DELETE FROM meta WHERE key=?", (k,))
+            else:
+                db.set_meta(k, v)
+        c.commit()
