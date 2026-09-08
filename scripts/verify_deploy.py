@@ -9,6 +9,7 @@ while `auth_is_default` is set ANY password authenticates.
 import contextlib
 import json
 import os
+import socket
 import pathlib
 import shutil
 import subprocess
@@ -20,6 +21,9 @@ import uuid as uuid_lib
 import httpx
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
+# --skip-raw-probe drops the outbound TCP probe (use it in CI, where the network
+# is not representative of any operator).
+SKIP_RAW_PROBE = "--skip-raw-probe" in sys.argv
 REPO = str(pathlib.Path(__file__).resolve().parent.parent)
 ADMIN_USER = "TiTaN"
 results: list[tuple[bool, str, str]] = []
@@ -223,7 +227,55 @@ def main() -> int:
     check("[8] xray config generation runs clean", "OK inbounds=" in out.stdout,
           (out.stdout + out.stderr)[-240:])
 
-    # -------------------------------------------------------- 9. restore admin state
+    # -------------------------------------------------------- 9. raw TCP path
+    # Everything above rides the HTTPS edge. This section is the part that
+    # decides whether a config works on a given mobile operator: raw TCP to the
+    # platform proxy, bypassing the edge and its SNI entirely.
+    with session(good_pw) as c:
+        st = c.get("/api/network/status")
+        check("[9] /api/network/status reports the exposure", st.status_code == 200, st.text[:140])
+        rep = st.json() if st.status_code == 200 else {}
+        raw = rep.get("tcp_proxy") or {}
+        rt = rep.get("round_trip") or {}
+        endpoint = raw.get("endpoint") or ""
+        is_railway = rep.get("platform") == "railway"
+        check("[9b] raw-TCP endpoint is known where the platform needs it",
+              bool(endpoint) or not is_railway,
+              f"endpoint={endpoint!r} source={raw.get('source')!r} warnings={rep.get('warnings')}")
+        check("[9c] raw entry forwards bytes intact (panel answered on that socket)",
+              (not rt.get("listening")) or rt.get("round_trip_ok") is True, str(rt)[:200])
+        if not rt.get("listening"):
+            print("        (note) no raw entry bound -- links use the HTTPS edge only")
+        for warn in (rep.get("warnings") or [])[:4]:
+            print(f"        (warn) {warn}")
+
+    if endpoint and not SKIP_RAW_PROBE:
+        host, _, sport = endpoint.rpartition(":")
+        detail, ok = "", False
+        t0 = time.monotonic()
+        try:
+            with socket.create_connection((host, int(sport)), timeout=10) as sock:
+                connect_ms = round((time.monotonic() - t0) * 1000)
+                sock.sendall(b"GET /health HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n")
+                sock.settimeout(10)
+                data = b""
+                while len(data) < 8192:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                ok = data.startswith(b"HTTP/1.") and b'\"status\":\"ok\"' in data.replace(b" ", b"")
+                detail = (f"connect {connect_ms}ms, {len(data)} bytes back from "
+                          f"{host}:{sport}; {data[:70]!r}")
+        except (OSError, ValueError) as exc:
+            detail = (f"{type(exc).__name__}: {exc} on {host}:{sport} -- a timeout here means "
+                      "this network drops the connection, which is exactly the "
+                      "works-on-MCI-fails-on-Irancell symptom")
+        check("[9d] the public raw port is reachable FROM WHERE THIS SCRIPT RUNS", ok, detail)
+        print("        (tip) run this script once per operator (Wi-Fi, Irancell, MCI) to see "
+              "which path each one blocks")
+
+    # -------------------------------------------------------- 10. restore admin state
     with session(good_pw) as c:
         r = c.post("/api/change-password", json={"old_password": good_pw, "new_password": ""},
                    headers={"Origin": BASE})

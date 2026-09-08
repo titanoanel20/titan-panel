@@ -35,6 +35,46 @@ def repo_root():
 
 
 @pytest.fixture(scope="session")
+def client_hello():
+    """Build a genuine TLS ClientHello for a given SNI.
+
+    Hand-written hex is a bad way to test an SNI parser: this returns exactly
+    what a client puts on the wire, captured from Python's own OpenSSL before
+    any server replies.
+    """
+    import asyncio
+    import ssl
+
+    def _build(sni: str = "www.speedtest.net") -> bytes:
+        captured = {}
+
+        async def _run():
+            async def stub(reader, writer):
+                captured["buf"] = await reader.read(4096)
+                writer.close()
+
+            server = await asyncio.start_server(stub, "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            try:
+                _r, _w = await asyncio.open_connection("127.0.0.1", port, ssl=ctx,
+                                                       server_hostname=sni)
+                await asyncio.sleep(0.2)
+            except (ssl.SSLError, ConnectionError, OSError):
+                pass
+            server.close()
+            await server.wait_closed()
+
+        asyncio.run(_run())
+        assert captured.get("buf"), "could not capture a ClientHello from this interpreter"
+        return captured["buf"]
+
+    return _build
+
+
+@pytest.fixture(scope="session")
 def client(tmp_path_factory):
     """A fully booted panel with its own throwaway database (mock Xray mode)."""
     data = tmp_path_factory.mktemp("titan-data")

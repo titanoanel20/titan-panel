@@ -19,6 +19,7 @@ own docstring deliberately avoids embedding a triple-quote example: doing that
 here reproduces the very bug under test.
 """
 import ast
+import re
 import io
 import pathlib
 import subprocess
@@ -126,7 +127,9 @@ def test_the_lines_a_bulk_replace_broke_are_intact():
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_public_host")
     doc = ast.get_docstring(fn) or ""
     assert "public_domain" in doc, doc
-    assert "return host.split" in main
+    # the helper still strips a :port off the Host header (rewritten when the
+    # Railway domain fallback landed, so match the behaviour, not the wording)
+    assert re.search(r"host\.split\(\":\"\)", main), "the public-host helper lost its port split"
     for needle in ("def _public_host(request: Request) -> str:",
                    "return port if 1 <= port <= 65535 else 443",
                    "if not db.get_user(uid):"):

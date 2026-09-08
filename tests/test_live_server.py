@@ -9,6 +9,7 @@ deployment, the "peer address" the login throttle was keyed on was still fully
 attacker controlled - a green TestClient suite and a broken production guard.
 Only a live server can see that.
 """
+import contextlib
 import os
 import socket
 import subprocess
@@ -27,14 +28,19 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture()
-def live(tmp_path):
-    """The exact command the container runs: `python -m app.main`."""
+@contextlib.contextmanager
+def booted(tmp_path, extra_env: dict | None = None):
+    """Run the exact command the container runs, and yield its base URL.
+
+    `extra_env` is how a test opts into a runtime that differs from the
+    default deploy (e.g. forcing the raw TCP entry on).
+    """
     data = tmp_path / "live" / str(_free_port())
     data.mkdir(parents=True, exist_ok=True)
     port = _free_port()
     env = {**os.environ, "TITAN_DATA_DIR": str(data), "PANEL_PORT": str(port),
-           "PYTHONPATH": REPO, "PATH": os.environ.get("PATH", "")}
+           "PYTHONPATH": REPO, "PATH": os.environ.get("PATH", ""),
+           **(extra_env or {})}
     log = open(data / "server.log", "w+", encoding="utf-8")
     proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
@@ -64,6 +70,12 @@ def live(tmp_path):
 
 
 @pytest.fixture()
+def live(tmp_path):
+    with booted(tmp_path) as base:
+        yield base
+
+
+@pytest.fixture()
 def first_run_session(live):
     """Session for a panel that has no password yet (fresh bootstrapped DB)."""
     with httpx.Client(base_url=live, timeout=20) as c:
@@ -84,6 +96,57 @@ def test_server_serves_traffic(live):
     body = httpx.get(f"{live}/health", timeout=5).json()
     assert body["status"] == "ok"
     assert isinstance(body["users"], int)
+    # auto mode must stay off when no platform proxy exists: on a VPS every
+    # inbound already owns its own port, and a gratuitous listener is a bug.
+    assert body["raw_tcp"] is False
+
+
+def test_raw_entry_round_trip_in_a_live_process(tmp_path, client_hello):
+    """The router must be real: bound in the running process, bytes intact.
+
+    TestClient cannot see this -- it never opens a socket.
+    """
+    raw_port = _free_port()
+    env = {"TITAN_RAW_ENTRY": "1", "TITAN_RAW_ENTRY_PORT": str(raw_port)}
+    with booted(tmp_path, env) as base, httpx.Client(base_url=base, timeout=20) as c:
+            assert c.post("/api/login", json={"username": "TiTaN", "password": ""}).status_code == 200
+            r = c.get("/api/network/status")
+            assert r.status_code == 200, r.text      # diagnostics must never 500
+            status = r.json()
+            assert status["tcp_proxy"]["raw_entry_listening"] is True, status
+            assert status["tcp_proxy"]["raw_entry_port"] == raw_port
+            assert status["round_trip"]["round_trip_ok"] is True, status["round_trip"]
+            assert c.get("/health").json()["raw_tcp"] is True
+
+            bind = status["tcp_proxy"]["stats"]["bind"]
+            host, _, port = bind.rpartition(":")
+            dialed = httpx.get(f"http://{host}:{port}/health", timeout=10)
+            assert dialed.status_code == 200 and dialed.json()["status"] == "ok"
+
+            # A real ClientHello must NOT be answered by the web server -- the
+            # whole point of the router is that handshakes reach an Xray inbound.
+            # In mock mode no Xray port is listening, so the honest observation
+            # is: no HTTP reply, one "tls" classification, and a recorded
+            # unreachable upstream (which also proves it was routed *away*).
+            hello = client_hello("www.speedtest.net")
+            with socket.create_connection((host, int(port)), timeout=5) as sock:
+                sock.sendall(hello)
+                sock.settimeout(2.0)
+                reply = b""
+                with contextlib.suppress(OSError):
+                    reply = sock.recv(4096)
+            assert not reply.startswith(b"HTTP/1."), reply[:60]
+            after = c.get("/api/network/status").json()
+            stats = after["tcp_proxy"]["stats"]
+            assert stats["by_kind"]["http"] >= 2, stats
+            assert stats["by_kind"]["tls"] == 1, stats
+            assert stats["routes"]["tls"].endswith(f":{10008}"), stats
+            assert any("unreachable" in e for e in stats["recent_errors"]), stats
+
+            # the selftest button's endpoint answers with the same verdict
+            rt = c.post("/api/network/selftest", headers={"Origin": base}).json()
+            assert rt["round_trip_ok"] is True, rt
+            assert rt["router"]["connections"] >= 3
 
 
 def test_forged_xff_does_not_change_the_peer_the_app_sees(live, first_run_session):
