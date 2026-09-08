@@ -104,6 +104,7 @@ Nginx (PORT) ──┬─ /vl-ws  ──► Xray VLESS WS  (10001)
 | `TITAN_RAW_ENTRY` | `auto` | مسیراب پورت خام (`1`/`0`); روی Railway با TCP Proxy لازم است — ببین `DEPLOY.md` گام ۴.۵ |
 | `TITAN_RAW_ENTRY_PORT` | `10999` | پورت داخلی که TCP Proxy ریلوی باید به آن وصل شود |
 | `TITAN_TCP_PROXY_HOST` / `TITAN_TCP_PROXY_PORT` | خالی | override دستی نشانی raw (Render/Fly/VPS یا متغیرهای خالی ریلوی) |
+| `TITAN_REALITY_PRIV` | خالی | کلید خصوصی x25519 (base64url) برای پین کردن جفت‌کلید Reality — بدون آن، روی Railway بدون Volume هر redeploy همهٔ لینک‌ها را می‌کشد |
 | `TITAN_DATA_DIR` | `data/` | محل دیتابیس و بکاپ |
 | `PANEL_PORT` | `10000` | پورت داخلی پنل |
 | `XRAY_BIN` | `/usr/local/bin/xray` | مسیر باینری Xray |
@@ -115,6 +116,9 @@ Nginx (PORT) ──┬─ /vl-ws  ──► Xray VLESS WS  (10001)
 | `/api/login` / `/api/logout` / `/api/change-password` | POST | احراز هویت |
 | `/api/me` | GET | وضعیت نشست و تنظیمات |
 | `/api/settings` | GET/POST | تنظیمات عمومی و پیشرفته |
+| `/api/reality/key` | POST | پین کردن جفت‌کلید Reality (کلید خصوصی فقط نوشته می‌شود، هرگز خوانده/لاگ نمی‌شود) |
+| `/api/network/status` | GET | وضعیت TCP Proxy، مسیریاب پورت خام، self-test و هشدارها |
+| `/api/network/selftest` | POST | اجرای دوبهٔ رفت‌وبرگشت روی پورت خام |
 | `/api/users` | GET/POST | لیست/ساخت کاربر |
 | `/api/users/<uid>` | GET/PATCH/DELETE | جزئیات/ویرایش/حذف |
 | `/api/users/<uid>/toggle` | POST | فعال/غیرفعال |

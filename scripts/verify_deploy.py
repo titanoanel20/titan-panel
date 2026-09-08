@@ -249,6 +249,17 @@ def main() -> int:
         for warn in (rep.get("warnings") or [])[:4]:
             print(f"        (warn) {warn}")
 
+        rea = rep.get("reality") or {}
+        pub = rea.get("public_key") or ""
+        ephemeral = any("Volume" in w for w in (rep.get("warnings") or []))
+        print(f"        reality key: source={rea.get('key_source') or 'none'} pbk={pub[:12]}..."
+              f"{' (dies on the next redeploy!)' if ephemeral else ''}")
+        check("[9e] Reality keypair survives a redeploy (Volume or a pinned key)",
+              not is_railway or rea.get("key_source") == "pinned" or not ephemeral,
+              "attach a Volume mounted at /app/data, or pin the key: settings -> Raw TCP -> "
+              "\"Pin key\" (or TITAN_REALITY_PRIV). Otherwise every published link keeps an "
+              "obsolete pbk after the next deploy.")
+
     if endpoint and not SKIP_RAW_PROBE:
         host, _, sport = endpoint.rpartition(":")
         detail, ok = "", False

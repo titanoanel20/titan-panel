@@ -221,3 +221,37 @@ def test_create_user_and_fetch_subscription_end_to_end(live):
         # the status page is public by design and must render
         assert httpx.get(f"{live}/status/{u['uid']}", timeout=10).status_code == 200
         c.delete(f"/api/users/{u['uid']}")
+
+
+def test_pinned_reality_key_survives_a_deploy_without_the_xray_binary(tmp_path):
+    """TITAN_REALITY_PRIV is read at boot, so a Railway redeploy with no Volume
+    still publishes the same pbk that the clients already have. Mock mode (no
+    xray binary) is exactly the case where keygen is impossible, so if the pin
+    works here it works there."""
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    import base64
+
+    priv_raw = X25519PrivateKey.generate().private_bytes_raw()
+    priv = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub = base64.urlsafe_b64encode(
+        X25519PrivateKey.from_private_bytes(priv_raw).public_key().public_bytes_raw()
+    ).decode().rstrip("=")
+
+    with booted(tmp_path, {"TITAN_REALITY_PRIV": priv}) as base, \
+            httpx.Client(base_url=base, timeout=20) as c:
+        assert c.post("/api/login", json={"username": "TiTaN", "password": ""}).status_code == 200
+        d = c.get("/api/network/status").json()
+        assert d["reality"]["key_source"] == "pinned", d["reality"]
+        assert d["reality"]["public_key"] == pub
+        assert priv not in c.get("/api/network/status").text      # not exposed by the API
+
+        r = c.post("/api/users", json={"name": "pinned-live", "protocol": "vless", "transport": "tcp",
+                                       "security": "reality", "quota_gb": 1},
+                   headers={"Origin": base})
+        assert r.status_code == 200, r.text
+        uid = r.json()["user"]["uid"]
+        try:
+            assert f"pbk={pub}" in r.json()["user"]["main_link"]
+        finally:
+            c.delete(f"/api/users/{uid}")

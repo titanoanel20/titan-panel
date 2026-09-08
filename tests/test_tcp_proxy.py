@@ -8,6 +8,7 @@ client into the wrong inbound.
 """
 import asyncio
 import types
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -459,3 +460,74 @@ def test_the_status_card_lists_the_raw_entry_and_its_verdict(admin):
     assert d["tcp_proxy"]["endpoint"] == ""
     assert "Hysteria2" in d["udp"]["note"] or "UDP" in d["udp"]["note"]
     assert d["protocols"]["hysteria2_wireguard"].lower().startswith("udp")
+
+
+# ------------------------------------------------------------------ anti-DPI params
+def test_raw_links_carry_the_fragment_settings(admin, db):
+    """Fragmenting the ClientHello is the documented Irancell/MCI workaround, so it
+    has to be on the *raw* links - that is where the DPI actually breaks the
+    handshake. Before this, only WS links carried the knobs."""
+    keys = ("tcp_proxy_host", "tcp_proxy_port", "public_domain", "raw_entry_mode",
+            "fragment_enabled", "fragment_length", "fragment_interval")
+    saved = {k: db.get_settings().get(k) for k in keys}
+    db.set_settings({"tcp_proxy_host": "roundhouse.proxy.rlwy.net", "tcp_proxy_port": 11105,
+                     "public_domain": "", "raw_entry_mode": "on",
+                     "fragment_enabled": True, "fragment_length": "10-100", "fragment_interval": "1-5"})
+    try:
+        r = admin.post("/api/users", json={"name": "frag", "protocol": "vless", "transport": "tcp",
+                                           "security": "reality", "quota_gb": 1},
+                       headers={"Origin": "http://testserver"})
+        assert r.status_code == 200, r.text
+        uid = r.json()["user"]["uid"]
+        try:
+            main = r.json()["user"]["main_link"]
+            q = parse_qs(urlparse(main).query)
+            assert q["fp_len"] == ["10-100"], main
+            assert q["fp_int"] == ["1-5"], main
+            assert "roundhouse.proxy.rlwy.net" in main and "security=reality" in main, main
+            assert q["fp"] == ["chrome"], main          # fingerprint untouched by the change
+            # the same knobs still reach the WS link, spelled identically
+            payload = admin.get(f"/api/users/{uid}/links").text
+            assert "fp_len=10-100" in payload and "fp_int=1-5" in payload
+        finally:
+            admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
+    finally:
+        db.set_settings(saved)
+
+
+def test_no_fragment_params_when_the_setting_is_off(admin, db):
+    """Default behaviour must not change: no magic params in a normal link."""
+    keys = ("tcp_proxy_host", "tcp_proxy_port", "public_domain", "raw_entry_mode", "fragment_enabled")
+    saved = {k: db.get_settings().get(k) for k in keys}
+    db.set_settings({"tcp_proxy_host": "roundhouse.proxy.rlwy.net", "tcp_proxy_port": 11105,
+                     "public_domain": "", "raw_entry_mode": "on", "fragment_enabled": False})
+    try:
+        r = admin.post("/api/users", json={"name": "nofrag", "protocol": "vless", "transport": "tcp",
+                                           "security": "reality", "quota_gb": 1},
+                       headers={"Origin": "http://testserver"})
+        uid = r.json()["user"]["uid"]
+        try:
+            assert "fp_len" not in r.json()["user"]["main_link"], r.json()["user"]["main_link"]
+        finally:
+            admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
+    finally:
+        db.set_settings(saved)
+
+
+def test_report_names_the_dead_http_target(admin, monkeypatch):
+    """A raw entry that forwards to a port nobody listens on looks like "blocked by
+    the operator" from the client side, so the report has to name the misroute."""
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    dead_port = free + 1                       # the port right after a bound one: not listening
+    stub = types.SimpleNamespace(bound_port=free, server=object(), errors=[],
+                                 routes={"http": ("127.0.0.1", dead_port)},
+                                 stats=lambda: {"recent_errors": []})
+    monkeypatch.setattr(admin.app.state, "raw_entry", stub, raising=False)
+    d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
+    hits = [w for w in d["warnings"] if str(dead_port) in w and "PANEL_PORT" in w]
+    assert hits, d["warnings"]
+    assert d["round_trip"]["checked"] is True and d["round_trip"]["round_trip_ok"] is False
