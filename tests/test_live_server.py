@@ -21,6 +21,11 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+#: A booted server inherits os.environ, so the keys that point at a database must
+#: come from the test - otherwise it silently shares another test's DB (and its
+#: admin password) whenever that test happened to run first.
+ISOLATED_ENV = ("TITAN_DATA_DIR", "TITAN_DB_PATH", "TITAN_XRAY_CONFIG", "PANEL_PORT")
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -38,9 +43,11 @@ def booted(tmp_path, extra_env: dict | None = None):
     data = tmp_path / "live" / str(_free_port())
     data.mkdir(parents=True, exist_ok=True)
     port = _free_port()
-    env = {**os.environ, "TITAN_DATA_DIR": str(data), "PANEL_PORT": str(port),
-           "PYTHONPATH": REPO, "PATH": os.environ.get("PATH", ""),
-           **(extra_env or {})}
+    env = {k: v for k, v in os.environ.items() if k not in ISOLATED_ENV}
+    env.update({"TITAN_DATA_DIR": str(data), "TITAN_DB_PATH": str(data / "titan.db"),
+                "TITAN_XRAY_CONFIG": str(data / "config.json"),
+                "PANEL_PORT": str(port), "PYTHONPATH": REPO,
+                "PATH": os.environ.get("PATH", ""), **(extra_env or {})})
     log = open(data / "server.log", "w+", encoding="utf-8")
     proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
@@ -255,3 +262,38 @@ def test_pinned_reality_key_survives_a_deploy_without_the_xray_binary(tmp_path):
             assert f"pbk={pub}" in r.json()["user"]["main_link"]
         finally:
             c.delete(f"/api/users/{uid}")
+
+
+# ------------------------------------------------------- public-port takeover
+def test_the_panel_takes_over_an_unanswered_platform_port(tmp_path):
+    """Railway routes to $PORT. When the start command skips nginx nothing answers
+    there, and the platform shows 'Application failed to respond' over a healthy
+    panel - so the demuxer claims $PORT and forwards HTTP to the panel itself."""
+    public = _free_port()
+    with (booted(tmp_path, {"PORT": str(public), "TITAN_RAW_ENTRY": "0"}) as base,
+          httpx.Client(timeout=15) as c):
+        r = c.get(f"http://127.0.0.1:{public}/health")
+        assert r.status_code == 200, (public, r.text[:160], base)
+        assert r.json()["raw_tcp"] is True, r.text[:160]
+        # the panel's own port keeps working too - the takeover is a forwarder
+        assert c.get(f"{base}/health").status_code == 200
+        # and the report must not cry wolf about the platform port any more
+        st = c.get(f"{base}/api/network/status")
+        assert st.status_code in (200, 401, 403), st.status_code
+
+
+def test_the_takeover_never_steals_a_port_that_is_already_served(tmp_path):
+    """With nginx (or anything else) on $PORT, the panel must stay on PANEL_PORT -
+    grabbing the public port here would break the real edge instead of fixing it."""
+    from test_container_startup import _Listener
+
+    public = _free_port()
+    with (_Listener(public),
+          booted(tmp_path, {"PORT": str(public), "TITAN_RAW_ENTRY": "0",
+                            "RAILWAY_SERVICE_ID": "svc-x"}) as base,
+          httpx.Client(timeout=15) as c):
+        assert c.get(f"{base}/health").status_code == 200
+        probe = socket.socket()
+        probe.settimeout(4)
+        probe.connect(("127.0.0.1", public))         # still the test's listener, not the panel's
+        probe.close()

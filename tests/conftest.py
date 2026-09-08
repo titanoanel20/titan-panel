@@ -23,6 +23,10 @@ from fastapi.testclient import TestClient
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO.parent))
 
+#: env vars the fixtures own; each is restored on teardown so a subprocess-started panel
+#: can never inherit another test's database
+ENV_KEYS = ("TITAN_DATA_DIR", "TITAN_DB_PATH", "TITAN_XRAY_CONFIG")
+
 
 def compile_all(root):
     return subprocess.run([sys.executable, "-m", "compileall", "-q", "app", "scripts"],
@@ -78,13 +82,24 @@ def client_hello():
 def client(tmp_path_factory):
     """A fully booted panel with its own throwaway database (mock Xray mode)."""
     data = tmp_path_factory.mktemp("titan-data")
+    saved = {k: os.environ.get(k) for k in ENV_KEYS}
     os.environ["TITAN_DATA_DIR"] = str(data)
     os.environ["TITAN_DB_PATH"] = str(data / "titan.db")
+    os.environ["TITAN_XRAY_CONFIG"] = str(data / "config.json")
     for mod in [m for m in list(sys.modules) if m.startswith("app.")]:
         del sys.modules[mod]
     main = __import__("app.main", fromlist=["app"])
     with TestClient(main.app, raise_server_exceptions=False) as c:
         yield c
+    # TestClient-based tests re-import app modules against these paths; leaving
+    # them in os.environ poisons any test that starts a *subprocess* panel (it
+    # inherits the environment) - which made live-server tests share one database
+    # depending on file order.
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(scope="session")
