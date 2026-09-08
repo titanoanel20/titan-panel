@@ -367,6 +367,48 @@ TCP خام روی پورت‌های جداگانه و مستقیم سرو می�
 
 ---
 
+## ۸.۵) فرانت‌های External Proxy (چند آدرس میانی — مثل 3x-ui)
+
+در 3x-ui این قابلیت `stream.externalProxy` نام دارد: یک inbound، چند آدرس برای
+معرفی به مشتری. TiTaN همان را در **تنظیمات → فرانت‌های External Proxy** دارد
+(کلید `external_proxy_rows`). هر ردیف = یک «جلوهٔ» میانی؛ برای هر ردیف، لینک‌های
+**جدا** و یک ورودی **جدا در اشتراک** ساخته می‌شود و لینک‌های اصلی دست‌نخورده می‌مانند.
+
+فیلدها (همان معنای 3x-ui):
+
+| فیلد | توضیح |
+|---|---|
+| `remark` | نام جلوه؛ به انتهای توضیح لینک اضافه می‌شود (`نام کاربر · Railway`) |
+| `host` | آدرس میانی؛ مثل `roundhouse.proxy.rlwy.net` یا دامنهٔ CDN |
+| `port` | پورت همان جلوه (روی Railway = پورت بیرونی TCP Proxy) |
+| `force_tls` | `same` (بدون تغییر) / `tls` (لینک به TLS عادی تبدیل می‌شود) / `none` (بدون TLS) |
+| `sni` | SNI مخصوص این جلوه (وقتی CDN گواهی میزبان دیگر را نشان می‌دهد) |
+| `fingerprint` / `alpn` | پوشش uTLS و ALPN برای همین جلوه |
+
+دو سناریوی واقعی:
+
+```jsonc
+// ۱) پروکسی TCP ریلوی، در کنار لینک دامنه‌ای
+[{"remark": "Railway raw", "host": "roundhouse.proxy.rlwy.net", "port": 15140, "force_tls": "same"}]
+// ۲) جلوئ CDN با پورت‌های غیر ۴۴۳ (TLS از اول لازم است)
+, {"remark": "CDN 2053", "host": "edge.example.com", "port": 2053, "force_tls": "tls", "sni": "a.example.com"}
+```
+
+از API هم می‌شود ست کرد (مقدار نامعتبر با `400` و پیام دقیق رد می‌شود):
+
+```bash
+curl -X POST https://<panel>/api/settings -H "Cookie: $CK" -H 'Content-Type: application/json' \
+  -d '{"external_proxy_rows":[{"remark":"Railway raw","host":"roundhouse.proxy.rlwy.net","port":15140,"force_tls":"same"}]}'
+```
+
+راهنمای انتخاب `force_tls`:
+
+- اگر جلوه **لایه ۴** است (پروکسی TCP ریلوی، NLB): `same` — هر چیزی که اینباند می‌گوید به مشتری می‌رسد.
+- اگر جلوه **لایه ۷/CDN** است: `tls` و `sni` را هم‌نام گواهی CDN بگذار؛ Reality از میانهٔ CDN رد نمی‌شود.
+- `none` فقط برای تست داخل شبکه — روی اینترنت ترافیک خوانا می‌شود.
+
+---
+
 ## ۹) Hysteria2، HTTPUpgrade و Fallback (فاز ۱ — سرعت و ضد-فیلترینگ)
 
 ### Hysteria2 (پیشنهادی برای سرعت بالا)
@@ -442,3 +484,25 @@ WireGuard به‌صورت **کاربر-فضا** (AmneziaWG) اجرا می‌شو
 ---
 
 <div align="center"><b>TiTaN</b> — fast, lightweight, magical ⚡</div>
+## ۱۱) کلیدهایی که حذف شدند (و چرا)
+
+در بازرسی کامل، چند کلید در `DEFAULT_SETTINGS` پیدا شد که **هیچ‌جا خوانده نمی‌شدند**
+— یعنی در UI دیده می‌شدند و ذخیره می‌شدند، ولی هیچ اثری در کانفیگ Xray یا رفتار پنل
+نداشتند. این‌ها حذف شدند تا «قابلیت جعلی» باقی نماند:
+
+| کلید | وضعیت قبلی |
+|---|---|
+| `fragment_packets` | هیچ مصرف‌کننده‌ای نداشت (فقط `fragment_length`/`fragment_interval` اثر دارند) |
+| `notify_new_conn` | دکور بود؛ هیچ نوتیفیکیشنی به آن وصل نبود |
+| `reality_enabled` | ژنراتور کانفیگ هرگز نخواندش؛ وضعیت واقعی از `reality_pub/sid` و وجود کاربر Reality گزارش می‌شود |
+| `lang` / `theme` | زبان و پوسته را `localStorage` مرورگر تعیین می‌کند؛ مقدار دیتابیس هیچ‌جا اعمال نمی‌شد |
+
+اگر مقدارهایشان در دیتابیس قدیمی‌ات مانده، بی‌ضرر است: هیچ‌جا خوانده نمی‌شود. برای
+پاک‌سازی دلخواه: `sqlite3 /app/data/titan.db "DELETE FROM settings WHERE key IN ('fragment_packets','notify_new_conn','reality_enabled','lang','theme');"`
+(قبلاً یک بکاپ بگیر).
+
+در مقابل، کلیدهایی که «شکمند» به نظر می‌رسیدند ولی واقعاً وصل‌اند، **حفظ شدند**:
+`block_ads` / `block_iran_sites` / `restrict_ips` (قوانین routing), `backup_enabled` +
+`backup_interval_hours` (job در `tasks.py`), `max_devices` (ثبت‌نام اتصال در `state.py`),
+و endpointهای `/sub/*`, `/api/status/<uid>`, `/dns-query`, `/api/node/*` که مشتری/نود
+صدایشان می‌کنند، نه داشبورد.

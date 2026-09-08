@@ -259,7 +259,7 @@ def _settings_with_proxy(**extra):
     return {"tcp_proxy_host": "roundhouse.proxy.rlwy.net", "tcp_proxy_port": 11105,
             "public_domain": "panel.example.com", "public_port": 443,
             "default_transport": "ws", "default_fingerprint": "chrome",
-            "default_alpn": "http/1.1", "reality_enabled": True, "reality_sni": "www.speedtest.net",
+            "default_alpn": "http/1.1", "reality_sni": "www.speedtest.net",
             **extra}
 
 
@@ -542,7 +542,7 @@ def test_no_reality_users_means_no_dead_handshake_warning(admin, db):
 
 def test_reality_report_matches_what_xray_actually_serves(admin, db):
     """The inbound exists iff a keypair exists and someone uses Reality. The stored
-    `reality_enabled` flag is not read by the config generator, so reporting it as
+    the generator never reads a stored "reality is on" flag, so the report must not
     the serving state makes a working panel look broken."""
     metas = ("reality_priv", "reality_pub")
     saved = {k: db.get_meta(k) for k in metas}
@@ -559,7 +559,7 @@ def test_reality_report_matches_what_xray_actually_serves(admin, db):
             assert d["reality"]["enabled"] is True, d["reality"]
             assert d["reality"]["reality_users"] >= 1
             assert d["reality"]["keypair"] is True
-            assert d["reality"]["reality_enabled_setting"] in (True, False)  # stored flag, unused
+            assert "reality_enabled_setting" not in d["reality"]   # the dead flag is gone for good
         finally:
             admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
     finally:

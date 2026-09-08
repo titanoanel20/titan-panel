@@ -336,6 +336,8 @@
       title: I18N.t('links') + ' — ' + esc(d.name || uid),
       body: `
         ${(d.links || []).map(l => linkRow((l.split('://')[0] || '').toUpperCase(), l)).join('')}
+        ${(d.fronts || []).map(f => `<div class="cell-sub" style="margin:10px 0 4px">${esc(f.remark)} · ${esc(f.host)}:${f.port} · ${I18N.t('front_force_' + f.force_tls)}</div>`
+          + (f.links || []).map(l => linkRow((l.split('://')[0] || '').toUpperCase(), l)).join('')).join('')}
         ${linkRow(I18N.t('sub_link'), d.sub_url)}
         ${linkRow('Status URL', d.status_url)}
         ${wgBlock}
@@ -1282,10 +1284,6 @@
       <div class="grid grid-2">
         <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_general"></div></div>
           <div class="panel-body">
-            <label class="field"><span class="field-label" data-i18n="set_lang"></span>
-              <select class="select" data-key="lang"><option value="fa" ${s.lang === 'fa' ? 'selected' : ''}>فارسی</option><option value="en" ${s.lang === 'en' ? 'selected' : ''}>English</option></select></label>
-            <label class="field"><span class="field-label" data-i18n="set_theme"></span>
-              <select class="select" data-key="theme"><option value="dark" ${s.theme === 'dark' ? 'selected' : ''} data-i18n="theme_dark"></option><option value="light" ${s.theme === 'light' ? 'selected' : ''} data-i18n="theme_light"></option></select></label>
             <label class="field"><span class="field-label" data-i18n="set_public_domain"></span>
               <input class="input" data-key="public_domain" value="${esc(s.public_domain)}" dir="ltr"></label>
             <label class="field"><span class="field-label" data-i18n="set_public_port"></span>
@@ -1335,6 +1333,13 @@
             <div class="cell-sub" style="margin-top:8px" data-i18n="raw_pin_hint"></div>
           </div>
         </div>
+        <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_fronts"></div>
+          <div class="page-actions"><button class="btn sm" id="frontAddBtn">+ <span data-i18n="front_add"></span></button></div></div>
+          <div class="panel-body">
+            <div class="cell-sub" style="margin-bottom:10px" data-i18n="fronts_hint"></div>
+            <div id="frontRows"></div>
+          </div>
+        </div>
         <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_avatar"></div></div>
           <div class="panel-body">
             <div class="row" style="gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
@@ -1375,9 +1380,53 @@
       </div>`;
     I18N.apply();
 
+    // --- external-proxy fronts (3x-ui externalProxy): rows of host:port fronts,
+    // each of which produces its own links and subscription entries.
+    let frontRows = (Array.isArray(s.external_proxy_rows) ? s.external_proxy_rows : []).map(r => ({
+      remark: r.remark || '', host: r.host || '', port: r.port || '',
+      force_tls: r.force_tls || 'same', sni: r.sni || '',
+    }));
+    const FORCE = ['same', 'tls', 'none'];
+    const renderFronts = () => {
+      const box = $('#frontRows');
+      if (!box) return;
+      if (!frontRows.length) { box.innerHTML = `<div class="cell-sub">${I18N.t('fronts_empty')}</div>`; return; }
+      box.innerHTML = frontRows.map((r, i) => `
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px" data-frow="${i}">
+          <input class="input" style="flex:1 1 110px" data-fkey="remark" data-i18n-ph="front_ph_remark"
+                 placeholder="${I18N.t('front_ph_remark')}" value="${esc(r.remark)}" dir="auto">
+          <input class="input" style="flex:2 1 170px" data-fkey="host" value="${esc(r.host)}"
+                 placeholder="roundhouse.proxy.rlwy.net" dir="ltr">
+          <input class="input" style="flex:0 1 84px" data-fkey="port" type="number" min="1" max="65535"
+                 value="${esc(r.port)}" placeholder="15140" dir="ltr">
+          <select class="select" style="flex:0 1 96px" data-fkey="force_tls">
+            ${FORCE.map(f => `<option value="${f}" ${r.force_tls === f ? 'selected' : ''}>${I18N.t('front_force_' + f)}</option>`).join('')}
+          </select>
+          <input class="input" style="flex:1 1 130px" data-fkey="sni" value="${esc(r.sni)}"
+                 placeholder="sni ${I18N.t('optional')}" dir="ltr">
+          <button class="btn sm" data-fdel="${i}" title="✕">✕</button>
+        </div>`).join('');
+      $$('[data-fkey]', box).forEach(el => el.addEventListener('change', () => {
+        const i = +el.closest('[data-frow]').dataset.frow;
+        frontRows[i][el.dataset.fkey] = el.value;
+      }));
+      $$('[data-fdel]', box).forEach(el => el.addEventListener('click', () => {
+        frontRows.splice(+el.dataset.fdel, 1);
+        renderFronts();
+      }));
+    };
+    renderFronts();
+    $('#frontAddBtn').addEventListener('click', () => {
+      frontRows.push({ remark: '', host: '', port: '', force_tls: 'same', sni: '' });
+      renderFronts();
+    });
+
     $('#saveSettings').addEventListener('click', async () => {
       const body = {};
       $$('[data-key]', view).forEach(el => { body[el.dataset.key] = el.type === 'checkbox' ? el.checked : el.value; });
+      body.external_proxy_rows = frontRows
+        .map(r => ({ ...r, port: String(r.port || '').trim() }))
+        .filter(r => r.host.trim() && r.port);
       try {
         await U.apiJson('/api/settings', { method: 'POST', body: JSON.stringify(body) });
         U.toast(I18N.t('settings_saved'), 'ok');

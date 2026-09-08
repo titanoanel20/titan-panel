@@ -239,12 +239,14 @@ NODE_SYNC_INTERVAL = int(os.environ.get("TITAN_NODE_SYNC_INTERVAL", "60"))
 
 # Default settings for newly created users / generated links.
 DEFAULT_SETTINGS = {
-    "lang": "fa",
-    "theme": "dark",
     "public_domain": "",
     "public_port": 443,
     # Raw-TCP entry through a platform TCP proxy (Railway). Empty host means
     # "detect from the platform"; the fields only exist to override that.
+    # External-proxy fronts (3x-ui stream.externalProxy): each row produces its
+    # own links/subscription entries. [{"remark","host","port","force_tls",
+    # "sni","fingerprint","alpn"}, ...]
+    "external_proxy_rows": [],
     "tcp_proxy_host": "",
     "tcp_proxy_port": 0,
     # "" (default) = not configured in the panel, so TITAN_RAW_ENTRY decides;
@@ -261,18 +263,15 @@ DEFAULT_SETTINGS = {
     "default_alpn": "http/1.1",
     "sni_override": "",
     "fragment_enabled": False,
-    "fragment_packets": "tlshello",
     "fragment_length": "10-30",
     "fragment_interval": "10-20",
     "restrict_ips": True,
     "block_ads": True,
     "block_iran_sites": False,
-    "notify_new_conn": False,
     "backup_enabled": True,
     "backup_interval_hours": 24,
     # reality (VLESS) — public values, filled when the keypair is generated
     "reality_pub": "",
-    "reality_enabled": False,
     "reality_sid": "",
     "reality_sni": "",
     "reality_dest": "",

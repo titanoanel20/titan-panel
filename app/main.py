@@ -37,7 +37,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import APP_NAME, APP_VERSION, config, db, security, state, xray
+from . import APP_NAME, APP_VERSION, config, db, fronts, security, state, xray
 from . import nodes as nodesync
 from . import reality
 from . import tcp_proxy
@@ -501,7 +501,7 @@ async def _network_report(settings: dict) -> dict:
             "Start Command - it should be: bash /app/entrypoint.sh")
     reality_ready = bool(db.get_meta("reality_priv"))
     # xray.write_xray_config() serves Reality iff a keypair exists *and* someone uses it.
-    # `reality_enabled` is a stored flag the generator never reads, so the report must not
+    # The generator never reads a "reality is on" flag, so the report must not
     # claim "disabled" while real Reality clients are connecting (that cost me an hour of
     # debugging in the preview: enabled=false, links perfectly alive).
     reality_users = sum(1 for u in db.list_users()
@@ -540,11 +540,15 @@ async def _network_report(settings: dict) -> dict:
             "raw_entry_port": config.RAW_ENTRY_PORT,
             "stats": router.stats() if router is not None else None,
         },
+        "fronts": [
+            {"remark": f["remark"], "host": f["host"], "port": f["port"],
+             "force_tls": f["force_tls"], "sni": f["sni"]}
+            for f in fronts.rows(settings)
+        ],
         "reality": {
             "enabled": bool(reality_ready and reality_users),
             "keypair": reality_ready,
             "reality_users": reality_users,
-            "reality_enabled_setting": bool(settings.get("reality_enabled")),
             "key_source": reality.key_source(),
             "public_key": db.get_meta("reality_pub") or settings.get("reality_pub") or "",
             "sni": _reality_snis(settings),
@@ -642,7 +646,22 @@ def _links_for(u: dict, request: Request | None) -> dict:
     if _user_is_remote(u):
         settings = {**settings, "sni_override": ""}
     server_pub = _wg_server_pub(u) if u.get("protocol") == "wireguard" else ""
-    return build_links(host, port, u, settings, server_pub=server_pub)
+    base = build_links(host, port, u, settings, server_pub=server_pub)
+    base["fronts"] = _front_links(u, settings, server_pub)
+    return base
+
+
+def _front_links(u: dict, settings: dict, server_pub: str) -> list[dict]:
+    """One set of links per configured external-proxy front (CDN / Railway TCP
+    proxy / mirror node). Additive: the primary links above are untouched."""
+    out = []
+    for fr in fronts.rows(settings):
+        fu, fs, f_host, f_port = fronts.with_front(u, fr, settings)
+        built = build_links(f_host, f_port, fu, fs, server_pub=server_pub)
+        out.append({"remark": fr["remark"], "host": f_host, "port": f_port,
+                    "force_tls": fr["force_tls"], "sni": fr["sni"],
+                    "links": built["all"], "main": built["main"]})
+    return out
 
 
 def _user_is_remote(u: dict) -> bool:
@@ -730,6 +749,7 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
         panel_host = _public_host(request)
         out["links"] = links["all"]
         out["main_link"] = links["main"]
+        out["fronts"] = links.get("fronts") or []
         out["sub_url"] = f"https://{panel_host}/sub/{u['uid']}"
         out["status_url"] = f"https://{panel_host}/status/{u['uid']}"
         out["qr_data"] = links["main"]
@@ -1057,6 +1077,11 @@ async def api_set_settings(request: Request, _: str = Depends(_require_auth)):
             continue
         if k == "default_alpn" and v not in config.VALID_ALPNS:
             continue
+        if k == "external_proxy_rows":
+            clean, err = fronts.normalize_rows(v)
+            if err:
+                raise HTTPException(400, f"external_proxy_rows: {err}")
+            v = clean
         if k == "tcp_proxy_host":
             v = tcp_proxy.clean_host(v)      # "" stays "" -- means "auto-detect"
         if k == "tcp_proxy_port":
@@ -1999,7 +2024,8 @@ async def sub_plain(uid: str, request: Request):
     if not user:
         raise HTTPException(404, "not-found")
     links = _links_for(user, request)
-    combined = [c["link"] for c in links["info"]] + links["all"]
+    combined = ([c["link"] for c in links["info"]] + links["all"]
+                + [l for fr in links["fronts"] for l in fr["links"]])
     body = subscription_text(combined)
     headers = _sub_headers(user)
     return Response(content=body, media_type="text/plain", headers=headers)
@@ -2023,6 +2049,7 @@ async def sub_json(uid: str, request: Request):
         "active_connections": st["active_connections"],
         "links": links["all"],
         "main_link": links["main"],
+        "fronts": links["fronts"],
     }, headers=_sub_headers(user))
 
 
