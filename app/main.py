@@ -15,9 +15,9 @@ import time
 import uuid as uuid_lib
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import quote
 
 import httpx
+import ipaddress
 import psutil
 import qrcode
 from PIL import Image as PILImage
@@ -79,15 +79,118 @@ async def lifespan(app: FastAPI):
     await doh_client.aclose()
 
 
-app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=lifespan)
+_DOCS_ON = os.environ.get("TITAN_DOCS", "").strip().lower() in ("1", "true", "yes")
+
+app = FastAPI(
+    title=APP_NAME,
+    version=APP_VERSION,
+    lifespan=lifespan,
+    # Swagger/ReOpenAPI enumerate the whole attack surface; keep them off unless
+    # a developer explicitly opts in with TITAN_DOCS=1.
+    docs_url="/docs" if _DOCS_ON else None,
+    redoc_url="/redoc" if _DOCS_ON else None,
+    openapi_url="/openapi.json" if _DOCS_ON else None,
+)
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+
+# Auth is a cookie, so every state-changing endpoint is a CSRF target. JSON
+# endpoints are accidentally shielded by the CORS preflight (they call
+# request.json(), so a cross-site form cannot reach them) but multipart ones
+# like POST /api/gallery are not — hence an explicit Origin check.
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Endpoints a browser cannot and must not be the one driving:
+#  - /sub/* and /status/* are dialed by VPN clients (no cookie involved)
+#  - /api/node/* is service-to-service (authenticated by node token)
+#  - /dns-query is a DoH oracle used by Xray clients
+_CSRF_EXEMPT_PREFIXES = ("/sub/", "/api/node/", "/dns-query", "/status/")
+
+
+def _allowed_origins(request: Request) -> set[str]:
+    hosts = {request.headers.get("host", "").strip()}
+    pd = (db.get_settings().get("public_domain") or "").strip()
+    if pd:
+        hosts.add(pd.split("//")[-1].strip("/"))
+    if _TRUST_PROXY_HEADERS:
+        xfh = request.headers.get("x-forwarded-host", "").strip()
+        if xfh:
+            hosts.add(xfh.split(",")[-1].strip())
+    out: set[str] = set()
+    for h in hosts:
+        if h:
+            out |= {f"https://{h}", f"http://{h}"}
+    return out
+
+
+@app.middleware("http")
+async def csrf_origin_guard(request: Request, call_next):
+    if request.method not in _SAFE_METHODS and not request.url.path.startswith(_CSRF_EXEMPT_PREFIXES):
+        origin = (request.headers.get("origin") or "").strip()
+        referer = (request.headers.get("referer") or "").strip()
+        source = origin or referer
+        if source:
+            allowed = _allowed_origins(request)
+            # A cross-site page CAN send this request; the response is unreadable
+            # without CORS, but the *write* still happens -> reject it outright.
+            root = "/".join(source.split("/")[:3])
+            if root.rstrip("/") not in {a.rstrip("/") for a in allowed}:
+                return JSONResponse(
+                    {"detail": "csrf-origin-rejected"},
+                    status_code=403,
+                    headers={"X-CSRF-Reason": "origin-not-allowed"},
+                )
+    return await call_next(request)
 
 
 # ------------------------------------------------------------------ helpers
+# Only trust X-Forwarded-For / X-Forwarded-Proto when the peer that opened the
+# TCP connection is a proxy we control. uvicorn binds to 127.0.0.1 and nginx
+# (or the platform edge) always fronts it, so without this check ANY client
+# could set an arbitrary XFF and defeat the per-IP login throttle.
+# Set TITAN_TRUST_PROXY_HEADERS=1 only when the panel is deployed *behind* a
+# reverse proxy that sanitizes XFF (nginx does: it overwrites the value).
+_TRUST_PROXY_HEADERS = os.environ.get(
+    "TITAN_TRUST_PROXY_HEADERS", "1"
+).strip().lower() in ("1", "true", "yes")
+
+
+def _peer_is_trusted_proxy(peer: str) -> bool:
+    """True when `peer` is loopback or a private network (nginx / platform edge)."""
+    if not peer:
+        return False
+    if peer in ("127.0.0.1", "::1", "localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(peer).is_private
+    except ValueError:
+        return False
+
+
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    peer = request.client.host if request.client else ""
+    if _TRUST_PROXY_HEADERS and _peer_is_trusted_proxy(peer):
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            # take the left-most entry only when it is a syntactically valid IP
+            ip = fwd.split(",")[0].strip()
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                return peer or "unknown"
+            return ip
+    return peer or "unknown"
+
+
+def _throttle_key(request: Request) -> str:
+    """Key for the login brute-force guard: the TCP peer, never a header.
+
+    X-Forwarded-For cannot be used here (10 forged values used to be 10 free
+    budgets), and neither can a value a middleware derived from it - that is why
+    `uvicorn.run` is called with `proxy_headers=False` in `__main__` and
+    `--no-proxy-headers` in scripts/dev_run.sh. Behind nginx every request
+    arrives from 127.0.0.1, so the guard is intentionally global: one attacker
+    slows down every visitor's guesses, which is the safe direction for a panel
+    with a single admin account.
+    """
     return request.client.host if request.client else "unknown"
 
 
@@ -313,7 +416,7 @@ _REMOTE_PROBE_TIMEOUT = 2.0
 async def _tcp_latency(host: str, port: int, timeout: float = 2.0) -> int | None:
     try:
         t0 = time.time()
-        reader, writer = await asyncio.wait_for(
+        _reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=timeout
         )
         lat = (time.time() - t0) * 1000
@@ -500,8 +603,10 @@ async def api_login(request: Request):
     password = payload.get("password") or ""
     ip = _client_ip(request)
 
-    # simple brute-force guard
-    key = f"login_attempts:{ip}"
+    # Brute-force guard. The counter is keyed on the *peer* address, never on
+    # X-Forwarded-For: a client-supplied header would let an attacker mint a
+    # fresh budget per attempt (10 forged IPs used to be 10 free tries).
+    key = f"login_attempts:{_throttle_key(request)}"
     raw = db.get_meta(key)
     locked_until = 0.0
     count = 0
@@ -514,7 +619,6 @@ async def api_login(request: Request):
             pass
     if locked_until > time.time():
         raise HTTPException(429, f"locked:{int(locked_until - time.time())}")
-
     admin = db.get_admin()
     default_auth = db.get_meta("auth_is_default") == "1"
     if default_auth and admin:
@@ -533,11 +637,26 @@ async def api_login(request: Request):
         return resp
 
     count += 1
+    # Penalise the *failed* attempt, after authentication has already been
+    # checked: delaying before the check would make a legitimate admin who
+    # mistyped three times wait on the next correct password too. The delay
+    # (rather than a hard lock) is the real defence here, because a
+    # single-container deploy shares one counter across every visitor - locking
+    # at 8 attempts would let anyone lock the admin out of their own panel.
+    if count >= config.LOGIN_SOFT_FAILS:
+        await asyncio.sleep(min(
+            config.LOGIN_BACKOFF_CAP_SECONDS,
+            0.5 * (2 ** min(count - config.LOGIN_SOFT_FAILS, 5)),
+        ))
     blob = {"count": count, "locked_until": 0}
-    if count >= config.LOGIN_MAX_ATTEMPTS:
+    if count >= config.LOGIN_HARD_LOCK_ATTEMPTS:
         blob = {"count": 0, "locked_until": time.time() + config.LOGIN_LOCK_SECONDS}
+        db.add_event("warn", "login-locked", f"after {count} attempts", ip=ip)
     db.set_meta(key, json.dumps(blob))
-    db.add_event("warn", "login-failed", f"username={username}", ip=ip)
+    # never echo the attempted username back into the audit log verbatim: it is
+    # attacker-controlled text rendered into the dashboard log table.
+    safe_name = re.sub(r"[^A-Za-z0-9_.@-]", "", username)[:32]
+    db.add_event("warn", "login-failed", f"username={safe_name}", ip=ip)
     raise HTTPException(401, "invalid-credentials")
 
 
@@ -691,7 +810,7 @@ async def api_gallery_upload(request: Request, _: str = Depends(_require_auth)):
         img = PILImage.open(io.BytesIO(data))
         img = img.convert("RGB")
     except Exception:  # noqa: BLE001
-        raise HTTPException(400, "invalid-image")
+        raise HTTPException(400, "invalid-image") from None
     img.thumbnail((512, 512))
     fname = f"{secrets.token_hex(8)}.png"
     img.save(os.path.join(_gallery_upload_dir(), fname), "PNG")
@@ -1040,6 +1159,19 @@ def _normalize_protocol_fields(protocol: str, transport, security) -> tuple[str,
 
 _reload_running = False
 _reload_wanted = 0
+# Strong references to background tasks. asyncio only keeps a weak reference to
+# a bare create_task() result, so a task scheduled from a request handler can be
+# garbage-collected while it is still pending ("Task was destroyed but it is
+# pending") - which silently drops a node sync or an Xray reload.
+_pending_tasks: set = set()
+
+
+def _spawn(coro, name: str = ""):
+    """Create a task and keep it alive until it finishes."""
+    task = asyncio.create_task(coro, name=name or None)
+    _pending_tasks.add(task)
+    task.add_done_callback(_pending_tasks.discard)
+    return task
 
 
 def _do_reload():
@@ -1068,7 +1200,10 @@ def _reload_xray():
     global _reload_wanted, _reload_running
     _reload_wanted += 1
     try:
-        loop = asyncio.get_running_loop()
+        # called from request handlers, so a loop exists; the node-sync path can
+        # also fire from a background task, where there may be none - bail out
+        # (the counter stays set and the next reload picks the work up).
+        asyncio.get_running_loop()
     except RuntimeError:
         return
     if _reload_running:
@@ -1086,13 +1221,13 @@ def _reload_xray():
         finally:
             _reload_running = False
 
-    loop.create_task(_loop())
+    _spawn(_loop(), name="xray-reload-loop")
 
 
 def _trigger_node_sync():
     """Push user changes to remote nodes without blocking the request."""
     try:
-        asyncio.create_task(nodesync.sync_all())
+        _spawn(nodesync.sync_all(), name="node-sync")
     except Exception:  # noqa: BLE001
         pass
 
@@ -1144,7 +1279,7 @@ async def api_list_nodes(_: str = Depends(_require_auth)):
     # probe every node concurrently so a dead/slow node never serializes the
     # response (this endpoint feeds the dashboard, users and config pages)
     statuses = await asyncio.gather(*[_node_status(n) for n in db_nodes])
-    return {"nodes": [_serialize_node(n, s) for n, s in zip(db_nodes, statuses)]}
+    return {"nodes": [_serialize_node(n, s) for n, s in zip(db_nodes, statuses, strict=True)]}
 
 
 def _normalize_node_address(raw: str) -> str:
@@ -1188,9 +1323,6 @@ async def api_create_node(request: Request, _: str = Depends(_require_auth)):
     # NOTE: auto-detection is intentionally disabled here because it often resolves
     # Railway domains to US (via ip-api.com). Admins should set country_code/flag manually
     # or use the node edit form to override. This avoids the node being auto-set to USA.
-    loc = {}
-    # if not cc and address:
-    #     loc = await asyncio.to_thread(detect_location, address)
     # Manual nodes also get a per-node token so sync works without a shared
     # TITAN_NODE_SECRET; the token is returned once (never re-serialized).
     token = secrets.token_hex(16)
@@ -1635,7 +1767,7 @@ async def api_restart(_: str = Depends(_require_auth)):
         await asyncio.sleep(1.5)
         os._exit(87)
 
-    asyncio.create_task(_delayed())
+    _spawn(_delayed(), name="restart")
     return {"ok": True, "restarting": True}
 
 
@@ -1684,4 +1816,10 @@ if __name__ == "__main__":
         host="127.0.0.1",
         port=config.PANEL_PORT,
         log_level="info",
+        # uvicorn defaults to proxy_headers=True with forwarded_allow_ips
+        # "127.0.0.1", which rewrites request.client from X-Forwarded-For. Since
+        # nginx is the only peer, that made the *raw* peer address attacker
+        # controlled too - the panel parses XFF itself (see _client_ip), so the
+        # middleware must not do it a second time.
+        proxy_headers=False,
     )

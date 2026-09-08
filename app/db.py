@@ -331,6 +331,9 @@ def update_user(uid: str, fields: dict) -> dict | None:
         "max_devices", "first_device_uid", "quota_bytes", "expire_at",
         "max_requests", "node_id", "avatar", "uuid",
         "ss_method", "wg_ip", "wg_priv", "wg_pub",
+        # allowed_ips was missing from this allowlist, so PATCH silently
+        # dropped it (the handler validated it, the UPDATE never wrote it).
+        "allowed_ips",
     }
     with _lock:
         c = _connect()

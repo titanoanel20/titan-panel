@@ -2,8 +2,18 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-data/*.db
-data/*.db-*
-data/backups/
+data/
+*.db
+*.db-*
+*.db-wal
+*.db-shm
 .env
 .DS_Store
+tmp-*/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# local xray artifacts written by the dev run
+config.json
+xray.log

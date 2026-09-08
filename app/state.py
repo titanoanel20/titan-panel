@@ -1,5 +1,4 @@
 """In-memory runtime state shared across the app."""
-import time
 
 # uid -> set of active connection tokens (websocket/client connections).
 ACTIVE: dict[str, set] = {}

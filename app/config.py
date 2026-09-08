@@ -108,7 +108,14 @@ XRAY_LOG_PATH = os.environ.get("TITAN_XRAY_LOG", os.path.join(DATA_DIR, "xray.lo
 # Session cookie.
 SESSION_COOKIE = "titan_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+# Progressive backoff starts after this many failed logins (see api_login);
+# the delay, not a hard lock, is the primary defence because a single-container
+# deploy shares one counter across every visitor.
+LOGIN_SOFT_FAILS = 3
+LOGIN_BACKOFF_CAP_SECONDS = 15
+# Hard lock only after this many consecutive failures.
 LOGIN_MAX_ATTEMPTS = 8
+LOGIN_HARD_LOCK_ATTEMPTS = 30
 LOGIN_LOCK_SECONDS = 10 * 60  # 10 minutes
 
 # ------------------------------------------------------------------ multi-node

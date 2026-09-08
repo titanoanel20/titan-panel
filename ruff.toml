@@ -1,0 +1,23 @@
+# A narrow, honest rule set: correctness first, style later.
+#
+# `# noqa: BLE001` markers already in the code refer to rules that are not in
+# `select` (they are enabled case-by-case with `--select` during cleanup
+# commits), so RUF100 is off to avoid churning 35 lines for no behaviour change.
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["F", "E9", "E7", "B", "SIM", "RUF"]
+ignore = [
+  "E501",    # long lines
+  "B008",    # Depends() in defaults - the FastAPI idiom
+  "E741",    # ambiguous variable names (l/ll) - legacy, cleaned opportunistically
+  "SIM105",  # contextlib.suppress is not clearer here
+  "SIM108",  # ternary assignment hurts readability in the geo/module code
+  "RUF100",  # see note above
+  "SIM102", "SIM103", "RUF005", "SIM115",  # cosmetic; swept in a dedicated cleanup commit
+  "RUF001", "RUF002", "RUF003",  # ambiguous unicode inside Persian strings/comments
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["SIM115"]  # a log fd must outlive Popen; closing it would truncate output
