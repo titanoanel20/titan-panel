@@ -92,7 +92,7 @@ def _client_ip(request: Request) -> str:
 
 
 def _public_host(request: Request) -> str:
-    """Get the public host for link generation, preferring public_domain setting."
+    """Get the public host for link generation, preferring the public_domain setting."""
     settings = db.get_settings()
     override = settings.get("public_domain") or ""
     if override:
