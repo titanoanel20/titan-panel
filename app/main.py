@@ -110,7 +110,7 @@ def _public_host(request: Request) -> str:
 
 def _link_port(settings: dict) -> int:
     """The port written into client links. 443 behind TLS by default; the admin
-    can override it from Settings → Network (e.g. a non-443 exposed port)."""
+    can override it from Settings -> Network (e.g. a non-443 exposed port)."""
     try:
         port = int(settings.get("public_port") or 443)
     except (TypeError, ValueError):
@@ -119,7 +119,7 @@ def _link_port(settings: dict) -> int:
 
 
 def _tcp_port(protocol: str, security: str) -> int:
-    """Public port a raw-TCP user should dial, per protocol × security."""
+    """Public port a raw-TCP user should dial, per protocol  and  security."""
     p = (protocol or "vless").lower()
     s = (security or "none").lower()
     if p == "vless":
@@ -340,7 +340,7 @@ async def _local_latency() -> int | None:
 async def _node_status(node: dict) -> dict:
     """Compute live status for a node. Cached for 30s. Remote nodes are probed
     with a short timeout; callers should run these concurrently (gather) so a
-    dead node never blocks the response for 2s × N."""
+    dead node never blocks the response for 2s  and  N."""
     now = time.time()
     cached = _node_status_cache.get(node["id"])
     if cached and now - cached["ts"] < 30:
@@ -577,7 +577,7 @@ async def api_change_password(request: Request, _: str = Depends(_require_auth))
         raise HTTPException(400, "weak-password")
     hp = security.hash_password(new)
     db.set_admin(admin["username"], hp["hash"], hp["salt"])
-    # A real password is now set → disable the "no password" first-run mode.
+    # A real password is now set -> disable the "no password" first-run mode.
     db.set_meta("auth_is_default", "0")
     db.add_event("warn", "password-change", "admin password changed", ip=_client_ip(request))
     return {"ok": True}
