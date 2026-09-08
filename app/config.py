@@ -37,6 +37,52 @@ XRAY_TCP_TROJAN_PORT = int(os.environ.get("XRAY_TCP_TROJAN_PORT", "10012"))     
 TLS_CERT_FILE = os.environ.get("TITAN_TLS_CERT", "")
 TLS_KEY_FILE = os.environ.get("TITAN_TLS_KEY", "")
 
+# ------------------------------------------------------------------ raw entry
+# Railway's TCP Proxy forwards a public host:port to exactly ONE internal port,
+# while this panel owns one inbound per protocol/security pair. So the raw
+# inbounds are fronted by a first-byte router (see app/tcp_proxy.py) bound here.
+#
+# RAILWAY_TCP_APPLICATION_PORT names the port Railway actually targets; defaulting
+# to it removes the classic mismatch where the proxy points at PORT (which nginx
+# owns) and the VPN inbound silently dials into the web server.
+def _int_env(*names: str, default: int = 0) -> int:
+    """First sane integer among `names`, else `default`.
+
+    config.py is imported before anything can render an error page, so a
+    malformed value must not take the whole panel down the way a bare int()
+    would.
+    """
+    for name in names:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if 1 <= value <= 65535:
+            return value
+    return default
+
+
+DEFAULT_RAW_ENTRY_PORT = 10999
+RAW_ENTRY_PORT = _int_env("TITAN_RAW_ENTRY_PORT", "RAILWAY_TCP_APPLICATION_PORT",
+                          default=DEFAULT_RAW_ENTRY_PORT)
+# 0.0.0.0 by default: Railway connects to the container's published interface.
+RAW_ENTRY_BIND = os.environ.get("TITAN_RAW_ENTRY_BIND", "0.0.0.0") or "0.0.0.0"
+# auto = run the router only where raw ports cannot be published (Railway /
+# a detected TCP proxy endpoint). on/off force it.
+RAW_ENTRY_MODE = (os.environ.get("TITAN_RAW_ENTRY") or "auto").strip().lower()
+# Optional explicit endpoint, for Render/Fly/VPS-in-front-of-a-TCP-proxy setups.
+TCP_PROXY_HOST = (os.environ.get("TITAN_TCP_PROXY_HOST") or "").strip()
+TCP_PROXY_PORT = _int_env("TITAN_TCP_PROXY_PORT", default=0)
+IS_RAILWAY = bool(os.environ.get("RAILWAY_SERVICE_ID") or os.environ.get("RAILWAY_PROJECT_ID"))
+
+
+# The decision itself (env mode + DB mode + detected endpoint) lives in
+# main._raw_entry_wanted, so that a setting changed in the UI is honoured
+# without needing a redeploy of the env vars.
+
 # Reality (VLESS) — destination to masquerade as + SNI to present.
 REALITY_DEST = os.environ.get("TITAN_REALITY_DEST", "1.1.1.1:443")
 REALITY_SNI = os.environ.get("TITAN_REALITY_SNI", "www.microsoft.com")
@@ -163,6 +209,18 @@ DEFAULT_SETTINGS = {
     "theme": "dark",
     "public_domain": "",
     "public_port": 443,
+    # Raw-TCP entry through a platform TCP proxy (Railway). Empty host means
+    # "detect from the platform"; the fields only exist to override that.
+    "tcp_proxy_host": "",
+    "tcp_proxy_port": 0,
+    # "" (default) = not configured in the panel, so TITAN_RAW_ENTRY decides;
+    # "on"/"off" pin it from the UI. Storing "auto" here instead of "" would
+    # shadow the env var, because a non-empty default always wins the `or`.
+    "raw_entry_mode": "",
+    # Which inbound owns the "everything else" class on the shared raw port.
+    # Shadowsocks' first bytes are indistinguishable from plain VLESS, so only
+    # one of them can live behind a single platform port.
+    "raw_default_inbound": "vless",
     "admin_avatar": "titan",
     "default_transport": "ws",
     "default_fingerprint": "chrome",

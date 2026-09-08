@@ -353,6 +353,12 @@ def generate_xray_config() -> dict:
     if vless_tcp_reality:
         priv = db.get_meta("reality_priv")
         sid = db.get_meta("reality_sid") or ""
+        # serverNames must cover the SNI the links advertise. reality.ensure_keys
+        # seeds the setting from config, but an admin who edits it (or a Railway
+        # redeploy that changes TITAN_REALITY_SNI) would otherwise produce links
+        # Reality rejects outright.
+        snis = sorted({s for s in (config.REALITY_SNI,
+                                   db.get_settings().get("reality_sni") or "") if s})
         if priv:
             inbounds.append({
                 "listen": "0.0.0.0", "port": config.XRAY_TCP_VLESS_REALITY_PORT, "protocol": "vless",
@@ -361,7 +367,7 @@ def generate_xray_config() -> dict:
                     "show": False,
                     "dest": config.REALITY_DEST,
                     "xver": 0,
-                    "serverNames": [config.REALITY_SNI],
+                    "serverNames": snis or [config.REALITY_SNI],
                     "privateKey": priv,
                     "shortIds": [sid],
                 }},

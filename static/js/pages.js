@@ -1313,6 +1313,22 @@
               <input class="input" data-key="sni_override" value="${esc(s.sni_override)}" dir="ltr"></label>
           </div>
         </div>
+        <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_raw"></div>
+          <div class="page-actions"><button class="btn sm" id="rawSelftestBtn">${ICONS.refresh}<span data-i18n="raw_selftest"></span></button></div></div>
+          <div class="panel-body">
+            <div id="rawStatus" class="cell-sub" style="margin-bottom:10px">${U.skeleton(2)}</div>
+            <label class="field"><span class="field-label" data-i18n="set_tcp_proxy_host"></span>
+              <input class="input" data-key="tcp_proxy_host" value="${esc(s.tcp_proxy_host || '')}" placeholder="auto" dir="ltr"></label>
+            <label class="field"><span class="field-label" data-i18n="set_tcp_proxy_port"></span>
+              <input class="input" type="number" min="0" max="65535" data-key="tcp_proxy_port" value="${esc(s.tcp_proxy_port || '')}" placeholder="auto" dir="ltr"></label>
+            <label class="field"><span class="field-label" data-i18n="set_raw_entry_mode"></span>
+              <select class="select" data-key="raw_entry_mode">${['auto', 'on', 'off'].map(m => `<option value="${m}" ${(s.raw_entry_mode || 'auto') === m ? 'selected' : ''}>${I18N.t('raw_mode_' + m)}</option>`).join('')}</select>
+              <span class="cell-sub" data-i18n="raw_mode_note"></span></label>
+            <label class="field"><span class="field-label" data-i18n="set_raw_default_inbound"></span>
+              <select class="select" data-key="raw_default_inbound">${['vless', 'shadowsocks'].map(m => `<option value="${m}" ${(s.raw_default_inbound || 'vless') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+            <div class="cell-sub" style="margin-top:8px" data-i18n="raw_entry_hint"></div>
+          </div>
+        </div>
         <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_avatar"></div></div>
           <div class="panel-body">
             <div class="row" style="gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
@@ -1367,6 +1383,37 @@
         U.toast(I18N.t('password_changed'), 'ok');
         $('#oldPass').value = ''; $('#newPass').value = '';
       } catch (e) { U.toast(I18N.t(e.message === 'wrong-old-password' ? 'wrong_old_password' : 'error'), 'err'); }
+    });
+
+    // --- raw TCP entry (Railway TCP proxy) status ---
+    let lastRaw = null;
+    const rawRow = (label, value, ok) => `<div class="row" style="justify-content:space-between;padding:4px 0"><span class="cell-sub">${label}</span><span${ok === true ? ' style="color:var(--green)"' : ok === false ? ' style="color:var(--red)"' : ''}>${value}</span></div>`;
+    const renderRaw = (d) => {
+      const box = $('#rawStatus');
+      if (!box) return;
+      lastRaw = d;
+      const t = d.tcp_proxy || {}, rt = d.round_trip || {};
+      const mark = (ok) => ok === true ? I18N.t('conn_ok') : ok === false ? I18N.t('conn_fail') : I18N.t('conn_untested');
+      box.innerHTML =
+        rawRow(I18N.t('raw_endpoint'), `<span dir="ltr">${esc(t.endpoint || I18N.t('raw_none'))}</span>`, !!t.endpoint) +
+        rawRow(I18N.t('raw_source'), esc(t.source || '—'), null) +
+        rawRow(I18N.t('raw_listening'), `${mark(!!t.raw_entry_listening)} <span dir="ltr">:${esc(t.raw_entry_port || '—')}</span>`, !!t.raw_entry_listening) +
+        rawRow(I18N.t('raw_roundtrip'), `${mark(rt.round_trip_ok === true ? true : rt.checked ? false : null)}${rt.detail ? `<div class="cell-sub" dir="ltr">${esc(rt.detail)}</div>` : ''}`, rt.round_trip_ok === true) +
+        ((d.warnings || []).map(w => `<div class="cell-sub" style="color:var(--amber);margin-top:6px">${esc(w)}</div>`).join(''));
+      I18N.apply();
+    };
+    U.apiJson('/api/network/status').then(renderRaw).catch(() => {
+      const box = $('#rawStatus');
+      if (box) box.innerHTML = `<div class="cell-sub">${esc(I18N.t('error'))}</div>`;
+    });
+    if ($('#rawSelftestBtn')) $('#rawSelftestBtn').addEventListener('click', async () => {
+      const b = $('#rawSelftestBtn');
+      b.disabled = true;
+      try {
+        const r = await U.apiJson('/api/network/selftest', { method: 'POST' });
+        renderRaw({ ...(lastRaw || {}), round_trip: r });
+        U.toast(r.round_trip_ok ? I18N.t('raw_roundtrip_ok') : I18N.t('raw_roundtrip_bad'), r.round_trip_ok ? 'ok' : 'err');
+      } catch (e) { U.toast(e.message, 'err'); } finally { b.disabled = false; }
     });
 
     // --- admin profile picture (avatar gallery) ---
@@ -1578,6 +1625,10 @@
       $('#connTestBox').innerHTML =
         row(I18N.t('conn_xray'), r.xray_installed ? (r.xray_running ? statusLine(true) : statusLine(false) + ' (installed, not running)') : statusLine(false) + ' (not installed)') +
         row(I18N.t('conn_config'), r.config_valid == null ? I18N.t('conn_untested') : (r.config_valid ? statusLine(true) : statusLine(false))) +
+        row(I18N.t('conn_raw'),
+          `${r.raw_endpoint ? `<span dir="ltr" style="font-size:.8rem">${esc(r.raw_endpoint)}</span> ` : `<span class="cell-sub">${I18N.t('raw_none')}</span> `}` +
+          (r.raw && r.raw.round_trip_ok ? statusLine(true) : statusLine(false)) +
+          (r.raw && r.raw.detail ? `<div class="cell-sub" dir="ltr">${esc(r.raw.detail)}</div>` : '')) +
         pubHTML;
       I18N.apply();
     };
