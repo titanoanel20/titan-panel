@@ -4,6 +4,36 @@ import os
 # Directory that holds the SQLite DB and generated Xray config.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get("TITAN_DATA_DIR", os.path.join(BASE_DIR, "data"))
+
+def _usable_data_dir(path: str) -> str:
+    """A data dir we can actually write to - or a loud downgrade instead of a crash.
+
+    The very first thing boot does is open the SQLite file, so an unwritable
+    `TITAN_DATA_DIR` (a Volume mounted at the wrong path, or read-only) used to
+    raise before anything could answer the healthcheck: the platform then shows a
+    generic "Application failed to respond" and the real reason is only in the
+    logs. Boot anyway, say why, and make the persistence loss visible.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".titan-write-test")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.remove(probe)
+        return path
+    except OSError as exc:
+        import logging
+        import tempfile
+        fallback = tempfile.mkdtemp(prefix="titan-data-")
+        logging.getLogger("titan.config").error(
+            "data dir %s is unusable (%s); falling back to %s. The panel will boot and "
+            "stay reachable, but users and settings will NOT survive a restart: mount "
+            "the Volume at /app/data or point TITAN_DATA_DIR at a writable path.",
+            path, exc, fallback)
+        return fallback
+
+
+DATA_DIR = _usable_data_dir(DATA_DIR)
 DB_PATH = os.environ.get("TITAN_DB_PATH", os.path.join(DATA_DIR, "titan.db"))
 XRAY_CONFIG_PATH = os.environ.get(
     "TITAN_XRAY_CONFIG", "/usr/local/bin/config.json"
@@ -11,6 +41,10 @@ XRAY_CONFIG_PATH = os.environ.get(
 
 # Public port of the container (Railway/Render inject PORT). Nginx listens here.
 PUBLIC_PORT = int(os.environ.get("PORT", "8000"))
+
+#: the same number, but only when the platform actually said it - the takeover in
+#: main.lifespan must not grab port 8000 on a dev box or a VPS where nobody set PORT.
+PLATFORM_PORT = int(os.environ["PORT"]) if os.environ.get("PORT") else 0
 
 # Ports for the internal services (localhost only).
 PANEL_PORT = int(os.environ.get("PANEL_PORT", "10000"))

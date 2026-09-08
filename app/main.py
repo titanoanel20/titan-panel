@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import time
 import uuid as uuid_lib
 from contextlib import asynccontextmanager
@@ -60,6 +61,8 @@ log = logging.getLogger("titan.main")
 # ------------------------------------------------------------------ lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # config._usable_data_dir() already made this writable (or replaced it with a
+    # temp dir and said so loudly), so a bad Volume cannot crash the boot.
     os.makedirs(config.DATA_DIR, exist_ok=True)
     if not config.IS_NODE:
         # generate the Reality keypair once (no-op without the Xray binary)
@@ -80,8 +83,9 @@ async def lifespan(app: FastAPI):
         pass
     # Raw TCP entry: one shared port for every raw inbound, so a Railway TCP
     # proxy (which forwards a single internal port) can serve Reality/TLS/plain.
+    _settings = db.get_settings()
+    app.state.raw_entry_rescued = False
     try:
-        _settings = db.get_settings()
         if _raw_entry_wanted(_settings):
             router = tcp_proxy.RawEntry(
                 _raw_entry_routes(_settings),
@@ -96,6 +100,31 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - a busy port must not kill the panel
         app.state.raw_entry = None
         log.error("raw TCP entry failed to start: %s", exc)
+
+    # Nothing answers the platform's public port? Then the edge has nowhere to route
+    # to, and the platform shows its generic "Application failed to respond" page even
+    # though the panel is healthy - the usual result of a start command that skipped
+    # nginx, or of PANEL_PORT being pointed at the wrong number. Take the port with the
+    # same demuxer: HTTP comes back here, TLS keeps going to the raw inbounds.
+    public = config.PLATFORM_PORT          # 0 unless the platform injected PORT
+    if (app.state.raw_entry is None and public and public != config.PANEL_PORT
+            and not _listener_up(public)):
+        try:
+            router = tcp_proxy.RawEntry(
+                _raw_entry_routes(_settings),
+                host=config.RAW_ENTRY_BIND,
+                port=public,
+                reality_snis=_reality_snis(_settings),
+            )
+            await router.serve()
+            app.state.raw_entry = router
+            app.state.raw_entry_rescued = True
+            log.warning("nothing served PORT=%s, so the panel took it over and forwards HTTP to "
+                        "127.0.0.1:%s. Restore nginx on $PORT (bash /app/entrypoint.sh), or set "
+                        "PANEL_PORT=%s, and this takeover becomes unnecessary.",
+                        public, config.PANEL_PORT, public)
+        except Exception as exc:  # noqa: BLE001 - a lost race for the port must not kill boot
+            log.error("could not take over PORT=%s: %s", public, exc)
     bg.start_background_tasks(app)
     yield
     router = getattr(app.state, "raw_entry", None)
@@ -456,6 +485,20 @@ async def _network_report(settings: dict) -> dict:
             "but no listener is there. When the panel serves a different port (uvicorn --port, "
             "$PORT), set PANEL_PORT to that port - Reality/TLS keep working on their own "
             "inbounds, but the panel and its diagnostics become unreachable that way.")
+    listen = {
+        "panel_port": config.PANEL_PORT,
+        "platform_port": config.PLATFORM_PORT,
+        "raw_entry_port": config.RAW_ENTRY_PORT,
+    }
+    if (config.IS_RAILWAY and config.PLATFORM_PORT and not getattr(app.state, "raw_entry_rescued", False)
+            and not _listener_up(config.PLATFORM_PORT)):
+        warnings.append(
+            f"Nothing is listening on the platform port {config.PLATFORM_PORT}, so Railway "
+            "has no answer to route to (that is the 'Application failed to respond' page). "
+            "The panel serves PANEL_PORT="
+            f"{config.PANEL_PORT}; the container must put nginx on $PORT (entrypoint.sh "
+            "does) or export PANEL_PORT=$PORT when there is no nginx. Check the service's "
+            "Start Command - it should be: bash /app/entrypoint.sh")
     reality_ready = bool(db.get_meta("reality_priv"))
     # xray.write_xray_config() serves Reality iff a keypair exists *and* someone uses it.
     # `reality_enabled` is a stored flag the generator never reads, so the report must not
@@ -482,6 +525,7 @@ async def _network_report(settings: dict) -> dict:
             "Volume, or pin a key below / set TITAN_REALITY_PRIV.")
     return {
         "platform": "railway" if config.IS_RAILWAY else "self-host",
+        "listen": listen,
         "https_edge": {
             "domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN", ""),
             "port": 443,
@@ -2184,12 +2228,28 @@ def _cors_headers() -> dict:
 
 
 # ------------------------------------------------------------------ entrypoint
+def _listener_up(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bool:
+    """Is something already answering on this local port? Cheap, and it is the
+    difference between "nginx fronts us" and "nothing serves the public port"."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 if __name__ == "__main__":
     import uvicorn
 
+    # 0.0.0.0 because whoever routes to us may not come from loopback (a platform
+    # proxy in another netns, a VPS client hitting the panel port directly). The
+    # *port* stays PANEL_PORT: entrypoint.sh puts nginx on $PORT and forwards it
+    # here, or - with no nginx in the image - exports PANEL_PORT=$PORT itself.
+    log.info("routing: panel=0.0.0.0:%s (platform PORT=%s, raw entry=%s)",
+             config.PANEL_PORT, config.PUBLIC_PORT, config.RAW_ENTRY_PORT)
     uvicorn.run(
         "app.main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=config.PANEL_PORT,
         log_level="info",
         # uvicorn defaults to proxy_headers=True with forwarded_allow_ips
