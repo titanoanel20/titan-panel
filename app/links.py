@@ -46,6 +46,19 @@ def _fragment_params(settings: dict) -> dict:
     }
 
 
+def _extra_query(settings: dict) -> str:
+    """The trailing params that are transport-independent (today: fragmentation).
+
+    Raw TCP links used to omit them while WS links carried them, so an admin who
+    enabled fragmentation got it on exactly the transport that needs it least:
+    Irancell-style DPI is defeated by fragmenting the ClientHello on *raw* TCP,
+    where the "failed to read client hello" breakage actually happens.
+    """
+    return "".join(
+        f"&{k}={quote(str(v), safe='')}" for k, v in _fragment_params(settings).items()
+    )
+
+
 def _host_params(host: str, path: str, sni: str, fp: str, alpn: str,
                  transport: str, settings: dict) -> str:
     parts = [
@@ -88,7 +101,7 @@ def build_vless_link(host: str, port: int, user: dict, settings: dict) -> str:
         return (
             f"vless://{uuid}@{host}:{port}?encryption=none&security=reality&"
             f"pbk={pk}&sid={sid}&sni={quote(rsni, safe='')}&spx={sx}&fp={fp}&type=tcp&"
-            f"headerType=none&flow=xtls-rprx-vision#{name}"
+            f"headerType=none&flow=xtls-rprx-vision{_extra_query(settings)}#{name}"
         )
 
     sec = "tls" if security == "tls" else "none"

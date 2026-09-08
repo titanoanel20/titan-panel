@@ -448,11 +448,26 @@ async def _network_report(settings: dict) -> dict:
         warnings.append("The raw entry router is not listening (port busy or bind failed).")
     if router is not None and router.errors:
         warnings.append("Raw entry saw errors: " + " | ".join(router.errors[-3:]))
+    if (router is not None and round_trip.get("checked") and not round_trip.get("round_trip_ok")
+            and not round_trip.get("bytes_back")):
+        dead = router.routes.get("http") or ("127.0.0.1", config.PANEL_PORT)
+        warnings.append(
+            f"Nothing answered through the raw port: it forwards HTTP to {dead[0]}:{dead[1]}, "
+            "but no listener is there. When the panel serves a different port (uvicorn --port, "
+            "$PORT), set PANEL_PORT to that port - Reality/TLS keep working on their own "
+            "inbounds, but the panel and its diagnostics become unreachable that way.")
     reality_ready = bool(db.get_meta("reality_priv"))
     if not reality_ready:
         warnings.append(
             "Reality has no keypair yet, so raw links fall back to TLS/plain. "
             "Reality is what makes a config survive operator DPI.")
+    has_volume = bool(os.environ.get("RAILWAY_VOLUME_NAME") or os.environ.get("TITAN_DATA_DIR_ON_VOLUME"))
+    if config.IS_RAILWAY and not has_volume and reality.key_source() != "pinned":
+        warnings.append(
+            "No Railway Volume and no pinned Reality key: every redeploy rewrites the "
+            "SQLite file, regenerates the keypair and silently invalidates every "
+            "Reality client at once (their links still carry the OLD pbk). Attach a "
+            "Volume, or pin a key below / set TITAN_REALITY_PRIV.")
     return {
         "platform": "railway" if config.IS_RAILWAY else "self-host",
         "https_edge": {
@@ -471,6 +486,8 @@ async def _network_report(settings: dict) -> dict:
         },
         "reality": {
             "enabled": bool(settings.get("reality_enabled")) and reality_ready,
+            "key_source": reality.key_source(),
+            "public_key": db.get_meta("reality_pub") or settings.get("reality_pub") or "",
             "sni": _reality_snis(settings),
             "dest": settings.get("reality_dest") or config.REALITY_DEST,
         },
@@ -1026,6 +1043,46 @@ async def api_network_selftest(_: str = Depends(_require_auth)):
         result["detail"] = ("the raw entry is not bound, so there is nothing to test; "
                            f"internal port for the proxy would be {config.RAW_ENTRY_PORT}")
     return result
+
+
+@app.post("/api/reality/key")
+async def api_reality_key(request: Request, _: str = Depends(_require_auth)):
+    """Pin the Reality keypair so a redeploy cannot invalidate every client.
+
+    On Railway without a Volume the database is recreated on each deploy, and
+    with it `reality_priv`: the panel then generates a new keypair, while every
+    published link still carries the old `pbk`. That shows up as "it worked
+    yesterday" and looks exactly like operator blocking. Pinning a key (or
+    attaching a Volume) is what makes Reality links durable.
+    """
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001 - malformed body is a client error, not a 500
+        raise HTTPException(400, "bad-json") from None
+    priv = str((payload or {}).get("private_key") or "")
+    try:
+        result = reality.set_private_key(
+            priv,
+            sid=str((payload or {}).get("sid") or ""),
+            sni=str((payload or {}).get("sni") or ""),
+            dest=str((payload or {}).get("dest") or ""),
+        )
+    except reality.BadKey as exc:
+        # the operator's key material must never end up in the audit log
+        db.add_event("warn", "reality-key-rejected", str(exc)[:160], ip=_client_ip(request))
+        raise HTTPException(400, f"invalid-private-key: {exc}") from None
+    except Exception as exc:  # noqa: BLE001
+        db.add_event("warn", "reality-key-rejected", type(exc).__name__, ip=_client_ip(request))
+        raise HTTPException(400, f"invalid-private-key: {type(exc).__name__}") from None
+    try:
+        # coalesced + off the request path: _reload_xray writes the config and
+        # restarts Xray, so the pin takes effect without stalling this call.
+        _reload_xray()
+    except Exception:  # noqa: BLE001 - the key is stored either way; reload is best effort
+        pass
+    db.add_event("info", "reality-key-pinned",
+                 f"pub={result['pub']} sni={result['sni']}", ip=_client_ip(request))
+    return {"ok": True, **result}
 
 
 # ------------------------------------------------------------------ avatar gallery (profile pictures)

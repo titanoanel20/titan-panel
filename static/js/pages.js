@@ -1327,6 +1327,12 @@
             <label class="field"><span class="field-label" data-i18n="set_raw_default_inbound"></span>
               <select class="select" data-key="raw_default_inbound">${['vless', 'shadowsocks'].map(m => `<option value="${m}" ${(s.raw_default_inbound || 'vless') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
             <div class="cell-sub" style="margin-top:8px" data-i18n="raw_entry_hint"></div>
+            <label class="field mt"><span class="field-label" data-i18n="set_reality_priv"></span>
+              <input class="input" type="password" id="realityPriv" placeholder="base64url / 43 chars" dir="ltr" autocomplete="off" spellcheck="false"></label>
+            <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn" id="pinRealityBtn">${ICONS.key}<span data-i18n="raw_pin"></span></button>
+            </div>
+            <div class="cell-sub" style="margin-top:8px" data-i18n="raw_pin_hint"></div>
           </div>
         </div>
         <div class="panel"><div class="panel-head"><div class="panel-title" data-i18n="sec_avatar"></div></div>
@@ -1348,10 +1354,10 @@
             ${sw('notify_new_conn', 'set_notify_conn')}
             ${sw('fragment_enabled', 'set_fragment')}
             <div class="grid-form mt" style="gap:0 14px">
-              <label class="field"><span class="field-label" data-i18n="set_fragment_packets"></span><input class="input" data-key="fragment_packets" value="${esc(s.fragment_packets)}"></label>
               <label class="field"><span class="field-label" data-i18n="set_fragment_length"></span><input class="input" data-key="fragment_length" value="${esc(s.fragment_length)}"></label>
               <label class="field"><span class="field-label" data-i18n="set_fragment_interval"></span><input class="input" data-key="fragment_interval" value="${esc(s.fragment_interval)}"></label>
             </div>
+            <div class="cell-sub" style="margin-top:6px" data-i18n="set_fragment_hint"></div>
             <button class="btn danger mt" id="restartBtn">${ICONS.power}<span data-i18n="set_restart"></span></button>
           </div>
         </div>
@@ -1398,6 +1404,7 @@
         rawRow(I18N.t('raw_endpoint'), `<span dir="ltr">${esc(t.endpoint || I18N.t('raw_none'))}</span>`, !!t.endpoint) +
         rawRow(I18N.t('raw_source'), esc(t.source || '—'), null) +
         rawRow(I18N.t('raw_listening'), `${mark(!!t.raw_entry_listening)} <span dir="ltr">:${esc(t.raw_entry_port || '—')}</span>`, !!t.raw_entry_listening) +
+        rawRow(I18N.t('raw_key_source'), `${esc((d.reality || {}).key_source || 'none')} · ${esc(((d.reality || {}).public_key || '').slice(0, 10))}…`, (d.reality || {}).key_source === 'pinned') +
         rawRow(I18N.t('raw_roundtrip'), `${mark(rt.round_trip_ok === true ? true : rt.checked ? false : null)}${rt.detail ? `<div class="cell-sub" dir="ltr">${esc(rt.detail)}</div>` : ''}`, rt.round_trip_ok === true) +
         ((d.warnings || []).map(w => `<div class="cell-sub" style="color:var(--amber);margin-top:6px">${esc(w)}</div>`).join(''));
       I18N.apply();
@@ -1405,6 +1412,17 @@
     U.apiJson('/api/network/status').then(renderRaw).catch(() => {
       const box = $('#rawStatus');
       if (box) box.innerHTML = `<div class="cell-sub">${esc(I18N.t('error'))}</div>`;
+    });
+    if ($('#pinRealityBtn')) $('#pinRealityBtn').addEventListener('click', async () => {
+      const field = $('#realityPriv');
+      const value = (field.value || '').trim();
+      if (!value) { U.toast(I18N.t('raw_pin_empty'), 'err'); return; }
+      try {
+        const r = await U.apiJson('/api/reality/key', { method: 'POST', body: JSON.stringify({ private_key: value }) });
+        field.value = '';                       // never keep key material in the DOM
+        U.toast(`${I18N.t('raw_pin_done')} · ${esc((r.pub || '').slice(0, 8))}`, 'ok');
+        renderRaw(await U.apiJson('/api/network/status'));
+      } catch (e) { U.toast(e.message, 'err'); }
     });
     if ($('#rawSelftestBtn')) $('#rawSelftestBtn').addEventListener('click', async () => {
       const b = $('#rawSelftestBtn');
