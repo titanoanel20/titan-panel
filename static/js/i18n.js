@@ -102,11 +102,11 @@ const I18N = (() => {
       sec_notifications: 'اعلان‌ها', sec_network: 'شبکه', sec_system: 'سیستم',
       sec_backup: 'پشتیبان‌گیری',
       set_public_domain: 'دامنه عمومی (اختیاری)',
-      sec_fronts: 'فرانت‌های پروکسی (External Proxy)',
-      fronts_hint: 'هر ردیف یک آدرس میانی است (پروکسی TCP ریلوی، CDN، نود آینه). برای هر ردیف، لینک جدا و یک ورودی در اشتراک ساخته می‌شود؛ لینک اصلی دست‌نخورده می‌ماند.',
-      fronts_empty: 'هنوز فرانتی اضافه نشده — فقط لینک اصلی ساخته می‌شود.',
-      front_add: 'افزودن فرانت', front_ph_remark: 'نام (مثل: ریلوی)',
-      front_force_same: 'مثل اصلی', front_force_tls: 'TLS', front_force_none: 'بدون TLS', optional: 'اختیاری',
+      
+      
+      
+      
+      
       set_change_password: 'تغییر رمز عبور', set_old_password: 'رمز عبور فعلی',
       set_new_password: 'رمز عبور جدید', set_notify_conn: 'اعلان اتصال جدید',
       set_transport: 'پروتکل انتقال پیش‌فرض', set_fingerprint: 'Fingerprint پیش‌فرض',
@@ -149,21 +149,20 @@ const I18N = (() => {
       change_picture: 'تغییر تصویر',
       avatar_user: 'تصویر پروفایل کاربر',
       // raw TCP (Railway TCP proxy)
-      sec_raw: 'TCP خام / Railway TCP Proxy', raw_selftest: 'تست مسیر خام',
-      set_tcp_proxy_host: 'دامنه TCP Proxy (خالی = خودکار)', set_tcp_proxy_port: 'پورت TCP Proxy (خالی = خودکار)',
-      set_raw_entry_mode: 'مسیریاب پورت مشترک', set_raw_default_inbound: 'پروتکل روی پورت خام',
-      raw_mode_auto: 'خودکار (فقط روی پلتفرمی که پورت منتشر نمی‌کند)', raw_mode_on: 'همیشه روشن', raw_mode_off: 'خاموش',
-      raw_entry_hint: 'ریلوی فقط یک پورت داخلی را فوروارد می‌کند، پس همهٔ اینباندهای خام پشت یک مسیریاب بایت‌اول قرار می‌گیرند. تا وقتی TCP Proxy را در Settings → Networking روشن نکنی، لینک‌های TCP و Reality از بیرون کار نمی‌کنند. هیستریا۲ و وایرگارد روی ریلوی ممکن نیستند (UDP ندارند).',
-      raw_mode_note: '«خودکار» یعنی نظرت را به متغیر محیطی TITAN_RAW_ENTRY واگذار کن.',
-      set_reality_priv: 'کلید خصوصی Reality (برای پین کردن)', raw_pin: 'پین کلید',
-      raw_pin_hint: 'روی Railway بدون Volume، هر دیپلوی کلید Reality را از نو می‌سازد و همهٔ لینک‌های منتشرشده (pbk قدیمی) یک‌جا می‌میرند. یک کلید پین کن تا لینک‌ها پایدار بمانند.',
-      raw_pin_empty: 'اول کلید را وارد کن', raw_pin_done: 'کلید پین شد',
-      raw_reality_served: 'inbound ساخته شده', raw_reality_unserved: 'inbound نیست',
-      raw_key_source: 'منبع کلید Reality', raw_pub: 'کلید عمومی',
-      raw_endpoint: 'نشانی لینک‌های خام', raw_source: 'منبع', raw_listening: 'مسیریاب', raw_roundtrip: 'رفت‌وبرگشت روی همان پورت',
-      raw_none: 'شناسایی نشد', raw_roundtrip_ok: 'مسیر خام سالم است', raw_roundtrip_bad: 'مسیر خام جواب نداد',
-      conn_raw: 'پورت خام (TCP Proxy)',
-      // public access
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+            // public access
       set_public_domain: 'دامنه عمومی (اختیاری)', set_public_port: 'پورت عمومی لینک‌ها (پیش‌فرض 443)',
       public_access_hint: 'دامنه‌ای که کلاینت‌ها برای اتصال استفاده می‌کنند؛ اگر خالی باشد از دامنهٔ درخواست استفاده می‌شود.',
       // connection test
@@ -179,8 +178,7 @@ const I18N = (() => {
       flag_placeholder: '🏳️', per_page: 'در هر صفحه',
       prev: 'قبلی', next: 'بعدی',
       empty_traffic: 'هنوز ترافیکی ثبت نشده است',
-      select_country: 'انتخاب کشور',
-    },
+      select_country: 'انتخاب کشور'  },
     en: {
       save: 'Save', cancel: 'Cancel', close: 'Close', delete: 'Delete', edit: 'Edit',
       copy: 'Copy', copied: 'Copied!', search: 'Search…', view_all: 'View all',
@@ -271,11 +269,11 @@ const I18N = (() => {
       sec_notifications: 'Notifications', sec_network: 'Network', sec_system: 'System',
       sec_backup: 'Backup',
       set_public_domain: 'Public domain (optional)',
-      sec_fronts: 'External-proxy fronts',
-      fronts_hint: 'Each row is an intermediate address (Railway TCP proxy, CDN, mirror node). Every row gets its own links and its own subscription entry; the primary links stay as they are.',
-      fronts_empty: 'No fronts yet — only the primary links are generated.',
-      front_add: 'Add front', front_ph_remark: 'label (e.g. railway)',
-      front_force_same: 'as origin', front_force_tls: 'TLS', front_force_none: 'no TLS', optional: 'optional',
+      
+      
+      
+      
+      
       set_change_password: 'Change password', set_old_password: 'Current password',
       set_new_password: 'New password', set_notify_conn: 'Notify on new connection',
       set_transport: 'Default transport', set_fingerprint: 'Default fingerprint',
@@ -315,21 +313,20 @@ const I18N = (() => {
       gallery_remove: 'Remove',
       change_picture: 'Change picture',
       avatar_user: 'User profile picture',
-      sec_raw: 'Raw TCP / Railway TCP Proxy', raw_selftest: 'Test raw path',
-      set_tcp_proxy_host: 'TCP proxy host (empty = auto)', set_tcp_proxy_port: 'TCP proxy port (empty = auto)',
-      set_raw_entry_mode: 'Shared-port router', set_raw_default_inbound: 'Protocol on the raw port',
-      raw_mode_auto: 'Auto (only where ports cannot be published)', raw_mode_on: 'Always on', raw_mode_off: 'Off',
-      raw_entry_hint: 'Railway forwards one internal port, so every raw inbound sits behind a first-byte router. Until you enable TCP Proxy in Settings -> Networking, raw-TCP and Reality links are unreachable from outside. Hysteria2 and WireGuard cannot work on Railway (no UDP).',
-      raw_mode_note: '“auto” defers to the TITAN_RAW_ENTRY environment variable.',
-      set_reality_priv: 'Reality private key (to pin it)', raw_pin: 'Pin key',
-      raw_pin_hint: 'On Railway without a Volume, every redeploy regenerates the Reality keypair and kills every published link at once (they still carry the old pbk). Pin a key so Reality links stay durable.',
-      raw_pin_empty: 'Enter a key first', raw_pin_done: 'key pinned',
-      raw_reality_served: 'inbound built', raw_reality_unserved: 'no inbound',
-      raw_key_source: 'Reality key source', raw_pub: 'public key',
-      raw_endpoint: 'Raw link address', raw_source: 'source', raw_listening: 'router', raw_roundtrip: 'round trip on that port',
-      raw_none: 'not detected', raw_roundtrip_ok: 'raw path works', raw_roundtrip_bad: 'raw path did not answer',
-      conn_raw: 'Raw port (TCP Proxy)',
-      set_public_domain: 'Public domain (optional)', set_public_port: 'Public link port (default 443)',
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+            set_public_domain: 'Public domain (optional)', set_public_port: 'Public link port (default 443)',
       public_access_hint: 'The domain clients connect to; if empty, the request domain is used.',
       conn_test: 'Connection test', conn_test_run: 'Run test', conn_testing: 'Checking…',
       conn_xray: 'Xray service', conn_config: 'Config file', conn_config_valid: 'Config validity',
@@ -341,9 +338,7 @@ const I18N = (() => {
       flag_placeholder: '🏳️', per_page: 'per page',
       prev: 'Prev', next: 'Next',
       empty_traffic: 'No traffic recorded yet',
-      select_country: 'Select country',
-    },
-  };
+      select_country: 'Select country'  }  };
 
   let lang = localStorage.getItem('titan_lang') || 'fa';
 

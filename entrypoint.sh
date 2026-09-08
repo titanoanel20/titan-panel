@@ -7,7 +7,6 @@ set -e
 
 PORT="${PORT:-8000}"
 PANEL_PORT="${PANEL_PORT:-10000}"
-RAW_ENTRY_PORT="${TITAN_RAW_ENTRY_PORT:-${RAILWAY_TCP_APPLICATION_PORT:-10999}}"
 NGINX_CONF="${NGINX_CONF:-/etc/nginx/nginx.conf}"   # the image copies it there
 
 if [ "$PANEL_PORT" = "$PORT" ]; then
@@ -36,7 +35,7 @@ else
   echo "[entrypoint] no nginx found - the panel itself will serve PORT=${PORT}"
 fi
 
-echo "[entrypoint] routing: PORT=${PORT} PANEL_PORT=${PANEL_PORT} RAW_ENTRY_PORT=${RAW_ENTRY_PORT} (raw-tcp=${TITAN_RAW_ENTRY:-auto})"
+echo "[entrypoint] routing: PORT=${PORT} PANEL_PORT=${PANEL_PORT}"
 echo "[entrypoint] storage: TITAN_DATA_DIR=${TITAN_DATA_DIR:-/app/data} (a Volume must be mounted here)"
 
 exec python3 -m app.main

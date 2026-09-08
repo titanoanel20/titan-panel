@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from app import config, main
+from app import config
 from conftest import REPO
 
 
@@ -43,39 +43,12 @@ class _Listener:
 
 
 # ------------------------------------------------------------------ the probe
-def test_listener_up_is_a_real_probe():
-    port = _free_port()
-    assert main._listener_up(port) is False
-    with _Listener(port):
-        assert main._listener_up(port) is True
-
-
 def test_the_panel_always_serves_panel_port():
     """The bind is not a guess: entrypoint.sh decides, the app just obeys."""
     src = pathlib.Path(REPO, "app", "main.py").read_text(encoding="utf-8")
     block = src[src.index('if __name__ == "__main__":'):]
     assert 'port=config.PANEL_PORT' in block, block[:400]
     assert 'host="0.0.0.0"' in block, block[:400]
-
-
-def test_report_warns_when_the_platform_port_is_unanswered(admin, db, monkeypatch):
-    """The UI has to name the dead port: that is the difference between a 30-second
-    fix and an afternoon of blaming the operator."""
-    from app import tcp_proxy
-
-    dead = _free_port()
-    monkeypatch.setattr(config, "IS_RAILWAY", True)
-    monkeypatch.setattr(config, "PLATFORM_PORT", dead)
-    monkeypatch.setattr(config, "RAW_ENTRY_PORT", _free_port())
-    monkeypatch.setattr(tcp_proxy, "endpoint_for", lambda settings: None, raising=False)
-    d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
-    hits = [w for w in d["warnings"] if f"port {dead}" in w]
-    assert hits and "entrypoint.sh" in hits[0], d["warnings"]
-    assert d["listen"]["platform_port"] == dead and d["listen"]["panel_port"] == config.PANEL_PORT
-
-    with _Listener(dead):        # nginx (or anything else) now answers there
-        d2 = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
-    assert not [w for w in d2["warnings"] if f"port {dead}" in w], d2["warnings"]
 
 
 # ------------------------------------------------------------------ entrypoint
@@ -153,12 +126,6 @@ def test_entrypoint_without_nginx_moves_the_panel_onto_the_public_port(container
     assert proc.returncode == 0, proc.stderr[-300:]
     assert "no nginx found" in proc.stdout, proc.stdout[-300:]
     assert f"python3 -m app.main PANEL_PORT={public}" in log, log
-
-
-def test_entrypoint_logs_the_raw_entry_port_too(container):
-    public, raw = _free_port(), _free_port()
-    proc, _log, _conf = _run(container, {"PORT": str(public), "TITAN_RAW_ENTRY_PORT": str(raw)})
-    assert f"routing: PORT={public} PANEL_PORT=10000 RAW_ENTRY_PORT={raw}" in proc.stdout, proc.stdout[-400:]
 
 
 # ------------------------------------------------------------------ data dir

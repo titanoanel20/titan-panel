@@ -4,7 +4,6 @@ FastAPI app: admin UI + REST API + subscription endpoints. Xray-core does the
 actual proxying; nginx fronts both. SQLite for storage.
 """
 import asyncio
-import contextlib
 import logging
 import base64
 import gzip
@@ -13,7 +12,6 @@ import json
 import os
 import re
 import secrets
-import socket
 import time
 import uuid as uuid_lib
 from contextlib import asynccontextmanager
@@ -37,10 +35,9 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import APP_NAME, APP_VERSION, config, db, fronts, security, state, xray
+from . import APP_NAME, APP_VERSION, config, db, security, state, xray
 from . import nodes as nodesync
 from . import reality
-from . import tcp_proxy
 from . import tasks as bg
 from . import wg
 from .colo_map import describe_colo
@@ -81,55 +78,8 @@ async def lifespan(app: FastAPI):
         wg.restart()
     except Exception:  # noqa: BLE001
         pass
-    # Raw TCP entry: one shared port for every raw inbound, so a Railway TCP
-    # proxy (which forwards a single internal port) can serve Reality/TLS/plain.
-    _settings = db.get_settings()
-    app.state.raw_entry_rescued = False
-    try:
-        if _raw_entry_wanted(_settings):
-            router = tcp_proxy.RawEntry(
-                _raw_entry_routes(_settings),
-                host=config.RAW_ENTRY_BIND,
-                port=config.RAW_ENTRY_PORT,
-                reality_snis=_reality_snis(_settings),
-            )
-            await router.serve()
-            app.state.raw_entry = router
-        else:
-            app.state.raw_entry = None
-    except Exception as exc:  # noqa: BLE001 - a busy port must not kill the panel
-        app.state.raw_entry = None
-        log.error("raw TCP entry failed to start: %s", exc)
-
-    # Nothing answers the platform's public port? Then the edge has nowhere to route
-    # to, and the platform shows its generic "Application failed to respond" page even
-    # though the panel is healthy - the usual result of a start command that skipped
-    # nginx, or of PANEL_PORT being pointed at the wrong number. Take the port with the
-    # same demuxer: HTTP comes back here, TLS keeps going to the raw inbounds.
-    public = config.PLATFORM_PORT          # 0 unless the platform injected PORT
-    if (app.state.raw_entry is None and public and public != config.PANEL_PORT
-            and not _listener_up(public)):
-        try:
-            router = tcp_proxy.RawEntry(
-                _raw_entry_routes(_settings),
-                host=config.RAW_ENTRY_BIND,
-                port=public,
-                reality_snis=_reality_snis(_settings),
-            )
-            await router.serve()
-            app.state.raw_entry = router
-            app.state.raw_entry_rescued = True
-            log.warning("nothing served PORT=%s, so the panel took it over and forwards HTTP to "
-                        "127.0.0.1:%s. Restore nginx on $PORT (bash /app/entrypoint.sh), or set "
-                        "PANEL_PORT=%s, and this takeover becomes unnecessary.",
-                        public, config.PANEL_PORT, public)
-        except Exception as exc:  # noqa: BLE001 - a lost race for the port must not kill boot
-            log.error("could not take over PORT=%s: %s", public, exc)
     bg.start_background_tasks(app)
     yield
-    router = getattr(app.state, "raw_entry", None)
-    if router is not None:
-        await router.stop()
     for t in app.state.titan_tasks:
         t.cancel()
     await doh_client.aclose()
@@ -284,7 +234,8 @@ def _public_host(request: Request) -> str:
     host = host.split(":")[0]
     if not _usable_public_host(host):
         # A platform-provided domain beats a request Host that no client can use.
-        platform_host = tcp_proxy.clean_host(os.environ.get("RAILWAY_PUBLIC_DOMAIN", ""))
+        platform_host = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "",
+                               os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")).split("/")[0].strip()
         if _usable_public_host(platform_host):
             return platform_host
     return host
@@ -315,260 +266,6 @@ def _tcp_port(protocol: str, security: str) -> int:
     if p == "trojan":
         return config.XRAY_TCP_TROJAN_PORT
     return config.XRAY_TCP_VLESS_PORT
-
-
-def _raw_entry_wanted(settings: dict) -> bool:
-    """Should the raw-TCP multiplexer run?  auto | on | off (see config)."""
-    configured = str(settings.get("raw_entry_mode") or "").strip().lower()
-    mode = ("" if configured in ("", "auto") else configured) or config.RAW_ENTRY_MODE
-    if mode in ("0", "off", "false", "no"):
-        return False
-    if mode in ("1", "on", "true", "yes"):
-        return True
-    # auto: the router only matters where the platform cannot publish one port
-    # per inbound -- a detected TCP proxy endpoint, or Railway itself (where the
-    # endpoint env vars are sometimes blank even with a proxy attached).
-    return bool(tcp_proxy.endpoint_for(settings)) or config.IS_RAILWAY
-
-
-def _raw_entry_routes(settings: dict) -> dict:
-    """Internal targets the raw entry forwards each traffic class to.
-
-    One port has to carry several inbounds, so the classes are what the first
-    bytes can actually distinguish: plaintext HTTP (the panel), a TLS
-    ClientHello (Xray's own TLS), a ClientHello whose SNI is Reality's decoy,
-    and everything else (plain VLESS or Shadowsocks).
-    """
-    local = "127.0.0.1"
-    raw_port = (config.XRAY_SS_PORT if (settings.get("raw_default_inbound") or "vless").lower() == "shadowsocks"
-                else config.XRAY_TCP_VLESS_PORT)
-    return tcp_proxy.build_routes(
-        # The panel socket, not the public one: inside the container nginx owns
-        # PUBLIC_PORT and forwards everything here anyway, and in dev (no nginx)
-        # this is the only thing listening. WebSocket links keep using the HTTPS
-        # edge -- a plaintext WS through a raw port has no upside.
-        http_target=(local, config.PANEL_PORT),
-        tls_target=(local, config.XRAY_TCP_VLESS_TLS_PORT),
-        reality_target=(local, config.XRAY_TCP_VLESS_REALITY_PORT),
-        raw_target=(local, raw_port),
-    )
-
-
-def _reality_snis(settings: dict) -> list[str]:
-    """SNIs that mark a connection as Reality on the shared raw port."""
-    out: list[str] = []
-    for value in (settings.get("reality_sni"), config.REALITY_SNI):
-        sni = str(value or "").strip().lower()
-        if sni and sni not in out:
-            out.append(sni)
-    return out
-
-
-def _raw_linkable(u: dict, settings: dict) -> bool:
-    """Can this user's config ride the single shared raw port?
-
-    Reality, TLS and the configured "raw" protocol can, because the router can
-    tell them apart. VLESS/VMess/Trojan TLS inbounds cannot share one port --
-    they are indistinguishable at the first byte -- so those keep dialing their
-    own port and stay a VPS-only feature.
-    """
-    proto = (u.get("protocol") or "vless").lower()
-    transport = (u.get("transport") or "ws").lower()
-    sec = (u.get("security") or "none").lower()
-    if proto == "shadowsocks":
-        return (settings.get("raw_default_inbound") or "vless").lower() == "shadowsocks"
-    if transport != "tcp":
-        return False
-    if proto == "vless":
-        return sec in ("none", "tls", "reality")
-    return False
-
-
-async def _raw_round_trip() -> dict:
-    """Push a real HTTP request through the raw entry and see what answers.
-
-    This is the part of the VPN path that can be proven without a client: if the
-    router forwards bytes intact, the panel's own /health answers through the
-    same socket a Reality handshake would use. A failure here means the exposed
-    port never reaches this process (proxy not enabled, or pointed at the wrong
-    internal port).
-    """
-    out = {"checked": False, "listening": False, "upstream": "", "round_trip_ok": False,
-           "bytes_back": 0, "response": "", "detail": ""}
-    router = getattr(app.state, "raw_entry", None)
-    if router is None:
-        out["detail"] = ("not running: enable the platform TCP proxy with internal port "
-                         f"{config.RAW_ENTRY_PORT}, or set TITAN_RAW_ENTRY=1")
-        return out
-    out["checked"] = True
-    out["listening"] = bool(router.server)
-    target = router.routes.get("http") or ("127.0.0.1", config.PANEL_PORT)
-    out["upstream"] = f"{target[0]}:{target[1]}"
-    if not router.bound_port:
-        out["detail"] = "bind failed (port already in use?)"
-        return out
-    request = (b"GET /health HTTP/1.1\r\nHost: raw-entry.local\r\n"
-               b"Connection: close\r\n\r\n")
-    writer = None
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", router.bound_port), timeout=5)
-        writer.write(request)
-        await writer.drain()
-        # One read() is not enough: uvicorn can hand back the header block in a
-        # separate segment from the body, and a probe that "times out" on a
-        # healthy panel would be worse than no probe at all. Read until the body
-        # parses, the socket closes, or the deadline passes.
-        data = b""
-        payload: dict = {}
-        deadline = time.monotonic() + 6
-        while time.monotonic() < deadline:
-            try:
-                chunk = await asyncio.wait_for(reader.read(65536),
-                                               max(0.05, deadline - time.monotonic()))
-            except (TimeoutError, asyncio.TimeoutError):
-                break
-            except (ConnectionError, OSError):
-                break
-            if not chunk:
-                break
-            data += chunk
-            head, _, body = data.partition(b"\r\n\r\n")
-            try:
-                payload = json.loads(body.decode("utf-8", "replace"))
-                break
-            except (ValueError, UnicodeDecodeError):
-                payload = {}
-        out["bytes_back"] = len(data)
-        head, _, _body = data.partition(b"\r\n\r\n")
-        out["response"] = head.split(b"\r\n", 1)[0].decode("latin-1", "replace")[:120]
-        out["round_trip_ok"] = out["response"].startswith("HTTP/1.") and payload.get("status") == "ok"
-        if not out["round_trip_ok"]:
-            out["detail"] = (f"reply was {out['response']!r} with {len(data)} bytes; "
-                             "the panel must answer HTTP through the raw port")
-    except Exception as exc:  # noqa: BLE001 - a diagnostic endpoint must answer, never raise
-        out["detail"] = f"{type(exc).__name__}: {exc}"
-    finally:
-        if writer is not None:
-            with contextlib.suppress(Exception):
-                writer.close()
-    return out
-
-
-async def _network_report(settings: dict) -> dict:
-    """Everything needed to diagnose "why do my links die on some operators"."""
-    entry = tcp_proxy.endpoint_for(settings)
-    source = tcp_proxy.endpoint_source(settings)
-    router = getattr(app.state, "raw_entry", None)
-    round_trip = await _raw_round_trip()
-    app_port = tcp_proxy.railway_application_port()
-    warnings: list[str] = []
-    if config.IS_RAILWAY and entry is None:
-        warnings.append(
-            "No TCP proxy endpoint found. Enable one in Railway: service Settings -> "
-            "Networking -> TCP Proxy, internal port "
-            f"{config.RAW_ENTRY_PORT}. Raw-TCP and Reality links are unreachable until you do.")
-    if app_port and app_port != config.RAW_ENTRY_PORT:
-        warnings.append(
-            f"Railway forwards its TCP proxy to port {app_port} but the raw entry is "
-            f"bound to {config.RAW_ENTRY_PORT}. Set TITAN_RAW_ENTRY_PORT={app_port}, "
-            "or point the proxy's internal port here.")
-    if router is not None and getattr(router, "bound_port", 0) == 0:
-        warnings.append("The raw entry router is not listening (port busy or bind failed).")
-    if router is not None and router.errors:
-        warnings.append("Raw entry saw errors: " + " | ".join(router.errors[-3:]))
-    if (router is not None and round_trip.get("checked") and not round_trip.get("round_trip_ok")
-            and not round_trip.get("bytes_back")):
-        dead = router.routes.get("http") or ("127.0.0.1", config.PANEL_PORT)
-        warnings.append(
-            f"Nothing answered through the raw port: it forwards HTTP to {dead[0]}:{dead[1]}, "
-            "but no listener is there. When the panel serves a different port (uvicorn --port, "
-            "$PORT), set PANEL_PORT to that port - Reality/TLS keep working on their own "
-            "inbounds, but the panel and its diagnostics become unreachable that way.")
-    listen = {
-        "panel_port": config.PANEL_PORT,
-        "platform_port": config.PLATFORM_PORT,
-        "raw_entry_port": config.RAW_ENTRY_PORT,
-    }
-    if (config.IS_RAILWAY and config.PLATFORM_PORT and not getattr(app.state, "raw_entry_rescued", False)
-            and not _listener_up(config.PLATFORM_PORT)):
-        warnings.append(
-            f"Nothing is listening on the platform port {config.PLATFORM_PORT}, so Railway "
-            "has no answer to route to (that is the 'Application failed to respond' page). "
-            "The panel serves PANEL_PORT="
-            f"{config.PANEL_PORT}; the container must put nginx on $PORT (entrypoint.sh "
-            "does) or export PANEL_PORT=$PORT when there is no nginx. Check the service's "
-            "Start Command - it should be: bash /app/entrypoint.sh")
-    reality_ready = bool(db.get_meta("reality_priv"))
-    # xray.write_xray_config() serves Reality iff a keypair exists *and* someone uses it.
-    # The generator never reads a "reality is on" flag, so the report must not
-    # claim "disabled" while real Reality clients are connecting (that cost me an hour of
-    # debugging in the preview: enabled=false, links perfectly alive).
-    reality_users = sum(1 for u in db.list_users()
-                        if (u.get("security") or "").lower() == "reality")
-    if reality_users and not reality_ready:
-        warnings.append(
-            f"{reality_users} user(s) already hold Reality links but this server has no "
-            "keypair to answer them, so that handshake dies. Pin a key (or let the panel "
-            "generate one when Xray is installed), then rebuild those links.")
-    elif not reality_ready:
-        warnings.append(
-            "Reality is not in use yet: no keypair exists, so any Reality link a user "
-            "picks would fall back to TLS/plain. Reality is what makes a config survive "
-            "operator DPI.")
-    has_volume = bool(os.environ.get("RAILWAY_VOLUME_NAME") or os.environ.get("TITAN_DATA_DIR_ON_VOLUME"))
-    if config.IS_RAILWAY and not has_volume and reality.key_source() != "pinned":
-        warnings.append(
-            "No Railway Volume and no pinned Reality key: every redeploy rewrites the "
-            "SQLite file, regenerates the keypair and silently invalidates every "
-            "Reality client at once (their links still carry the OLD pbk). Attach a "
-            "Volume, or pin a key below / set TITAN_REALITY_PRIV.")
-    return {
-        "platform": "railway" if config.IS_RAILWAY else "self-host",
-        "listen": listen,
-        "https_edge": {
-            "domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN", ""),
-            "port": 443,
-            "serves": "ws / xhttp / grpc / httpupgrade links, and the panel itself",
-        },
-        "tcp_proxy": {
-            "endpoint": f"{entry[0]}:{entry[1]}" if entry else "",
-            "host": entry[0] if entry else "",
-            "port": entry[1] if entry else 0,
-            "source": source,
-            "raw_entry_listening": bool(router and router.server),
-            "raw_entry_port": config.RAW_ENTRY_PORT,
-            "stats": router.stats() if router is not None else None,
-        },
-        "fronts": [
-            {"remark": f["remark"], "host": f["host"], "port": f["port"],
-             "force_tls": f["force_tls"], "sni": f["sni"]}
-            for f in fronts.rows(settings)
-        ],
-        "reality": {
-            "enabled": bool(reality_ready and reality_users),
-            "keypair": reality_ready,
-            "reality_users": reality_users,
-            "key_source": reality.key_source(),
-            "public_key": db.get_meta("reality_pub") or settings.get("reality_pub") or "",
-            "sni": _reality_snis(settings),
-            "dest": settings.get("reality_dest") or config.REALITY_DEST,
-        },
-        "udp": {
-            "note": ("Hysteria2 and WireGuard need UDP. Railway's TCP proxy is TCP-only, "
-                     "so those protocols require a VPS."),
-        },
-        "round_trip": round_trip,
-        "protocols": {
-            "tcp_reality": "shared raw port" if entry else "needs a published port (VPS)",
-            "tcp_tls": "shared raw port" if entry else "needs a published port (VPS)",
-            "ss_or_plain": "shared raw port (" + str(settings.get("raw_default_inbound") or "vless") + ")"
-                           if entry else "needs a published port (VPS)",
-            "vmess_trojan_tls": "own port -- not shareable with the others, VPS only",
-            "hysteria2_wireguard": "UDP -- not available on Railway at all",
-        },
-        "warnings": warnings,
-    }
 
 
 def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
@@ -624,14 +321,6 @@ def _user_endpoint(u: dict, request: Request | None) -> tuple[str, int]:
             port = config.FALLBACK_PORT
         else:
             port = _tcp_port(proto, sec)
-    # A platform TCP proxy (Railway) is the only way raw bytes reach the
-    # container, and it owns a single host:port for every inbound. Those links
-    # must dial it instead of the HTTPS domain, or the client ends up speaking
-    # VLESS into an nginx that answers with HTTP.
-    if proto == "shadowsocks" or transport == "tcp":
-        endpoint = tcp_proxy.endpoint_for(settings)
-        if endpoint and _raw_linkable(u, settings) and not _user_is_remote(u):
-            host, port = endpoint
     return host, port
 
 
@@ -646,22 +335,7 @@ def _links_for(u: dict, request: Request | None) -> dict:
     if _user_is_remote(u):
         settings = {**settings, "sni_override": ""}
     server_pub = _wg_server_pub(u) if u.get("protocol") == "wireguard" else ""
-    base = build_links(host, port, u, settings, server_pub=server_pub)
-    base["fronts"] = _front_links(u, settings, server_pub)
-    return base
-
-
-def _front_links(u: dict, settings: dict, server_pub: str) -> list[dict]:
-    """One set of links per configured external-proxy front (CDN / Railway TCP
-    proxy / mirror node). Additive: the primary links above are untouched."""
-    out = []
-    for fr in fronts.rows(settings):
-        fu, fs, f_host, f_port = fronts.with_front(u, fr, settings)
-        built = build_links(f_host, f_port, fu, fs, server_pub=server_pub)
-        out.append({"remark": fr["remark"], "host": f_host, "port": f_port,
-                    "force_tls": fr["force_tls"], "sni": fr["sni"],
-                    "links": built["all"], "main": built["main"]})
-    return out
+    return build_links(host, port, u, settings, server_pub=server_pub)
 
 
 def _user_is_remote(u: dict) -> bool:
@@ -749,7 +423,6 @@ def _serialize_user(u: dict, with_links: bool = False, request: Request | None =
         panel_host = _public_host(request)
         out["links"] = links["all"]
         out["main_link"] = links["main"]
-        out["fronts"] = links.get("fronts") or []
         out["sub_url"] = f"https://{panel_host}/sub/{u['uid']}"
         out["status_url"] = f"https://{panel_host}/status/{u['uid']}"
         out["qr_data"] = links["main"]
@@ -1077,22 +750,6 @@ async def api_set_settings(request: Request, _: str = Depends(_require_auth)):
             continue
         if k == "default_alpn" and v not in config.VALID_ALPNS:
             continue
-        if k == "external_proxy_rows":
-            clean, err = fronts.normalize_rows(v)
-            if err:
-                raise HTTPException(400, f"external_proxy_rows: {err}")
-            v = clean
-        if k == "tcp_proxy_host":
-            v = tcp_proxy.clean_host(v)      # "" stays "" -- means "auto-detect"
-        if k == "tcp_proxy_port":
-            v = 0 if v in ("", None) else (tcp_proxy.parse_port(v) or 0)
-        if k == "raw_entry_mode":
-            picked = str(v or "").strip().lower()
-            if picked not in ("", "auto", "on", "off"):
-                continue
-            v = "" if picked in ("", "auto") else picked
-        if k == "raw_default_inbound" and str(v).lower() not in ("vless", "shadowsocks"):
-            continue
         updates[k] = v
     db.set_settings(updates)
     # routing-affecting flags require an Xray reload
@@ -1104,69 +761,6 @@ async def api_set_settings(request: Request, _: str = Depends(_require_auth)):
             pass
     db.add_event("info", "settings-update", json.dumps(updates, ensure_ascii=False)[:300])
     return {"ok": True, "settings": db.get_settings()}
-
-
-@app.get("/api/network/status")
-async def api_network_status(_: str = Depends(_require_auth)):
-    """Report how this deploy is exposed and what the links point at.
-
-    Read-only diagnostics for the "works on one operator, times out on another"
-    class of problem: which edge the client dials, whether a raw TCP entry is
-    listening, and what is misconfigured.
-    """
-    return await _network_report(db.get_settings())
-
-
-@app.post("/api/network/selftest")
-async def api_network_selftest(_: str = Depends(_require_auth)):
-    """Run the raw-entry round trip now and report it (Settings -> Raw TCP)."""
-    router = getattr(app.state, "raw_entry", None)
-    result = await _raw_round_trip()
-    result["router"] = router.stats() if router is not None else None
-    if router is None:
-        result["detail"] = ("the raw entry is not bound, so there is nothing to test; "
-                           f"internal port for the proxy would be {config.RAW_ENTRY_PORT}")
-    return result
-
-
-@app.post("/api/reality/key")
-async def api_reality_key(request: Request, _: str = Depends(_require_auth)):
-    """Pin the Reality keypair so a redeploy cannot invalidate every client.
-
-    On Railway without a Volume the database is recreated on each deploy, and
-    with it `reality_priv`: the panel then generates a new keypair, while every
-    published link still carries the old `pbk`. That shows up as "it worked
-    yesterday" and looks exactly like operator blocking. Pinning a key (or
-    attaching a Volume) is what makes Reality links durable.
-    """
-    try:
-        payload = await request.json()
-    except Exception:  # noqa: BLE001 - malformed body is a client error, not a 500
-        raise HTTPException(400, "bad-json") from None
-    priv = str((payload or {}).get("private_key") or "")
-    try:
-        result = reality.set_private_key(
-            priv,
-            sid=str((payload or {}).get("sid") or ""),
-            sni=str((payload or {}).get("sni") or ""),
-            dest=str((payload or {}).get("dest") or ""),
-        )
-    except reality.BadKey as exc:
-        # the operator's key material must never end up in the audit log
-        db.add_event("warn", "reality-key-rejected", str(exc)[:160], ip=_client_ip(request))
-        raise HTTPException(400, f"invalid-private-key: {exc}") from None
-    except Exception as exc:  # noqa: BLE001
-        db.add_event("warn", "reality-key-rejected", type(exc).__name__, ip=_client_ip(request))
-        raise HTTPException(400, f"invalid-private-key: {type(exc).__name__}") from None
-    try:
-        # coalesced + off the request path: _reload_xray writes the config and
-        # restarts Xray, so the pin takes effect without stalling this call.
-        _reload_xray()
-    except Exception:  # noqa: BLE001 - the key is stored either way; reload is best effort
-        pass
-    db.add_event("info", "reality-key-pinned",
-                 f"pub={result['pub']} sni={result['sni']}", ip=_client_ip(request))
-    return {"ok": True, **result}
 
 
 # ------------------------------------------------------------------ avatar gallery (profile pictures)
@@ -1308,12 +902,6 @@ async def api_connection_test(_: str = Depends(_require_auth)):
     ):
         internal[name] = await _tcp_latency("127.0.0.1", p, timeout=1.5) is not None
     result["internal_ports_open"] = internal
-    # The raw TCP entry is the only path that works on a platform with no
-    # publishable ports (Railway), so the one-button test has to cover it too.
-    entry = tcp_proxy.endpoint_for(settings)
-    result["raw_endpoint"] = f"{entry[0]}:{entry[1]}" if entry else ""
-    result["raw_endpoint_source"] = tcp_proxy.endpoint_source(settings)
-    result["raw"] = await _raw_round_trip()
 
     # validate the generated Xray config (only if binary present)
     result["config_valid"] = None
@@ -2024,8 +1612,7 @@ async def sub_plain(uid: str, request: Request):
     if not user:
         raise HTTPException(404, "not-found")
     links = _links_for(user, request)
-    combined = ([c["link"] for c in links["info"]] + links["all"]
-                + [l for fr in links["fronts"] for l in fr["links"]])
+    combined = [c["link"] for c in links["info"]] + links["all"]
     body = subscription_text(combined)
     headers = _sub_headers(user)
     return Response(content=body, media_type="text/plain", headers=headers)
@@ -2049,7 +1636,6 @@ async def sub_json(uid: str, request: Request):
         "active_connections": st["active_connections"],
         "links": links["all"],
         "main_link": links["main"],
-        "fronts": links["fronts"],
     }, headers=_sub_headers(user))
 
 
@@ -2110,9 +1696,6 @@ async def health():
         "version": APP_VERSION,
         "wg_pub": wg.server_public_key(),  # "" when WireGuard is unavailable
         "users": len(db.list_users()),     # lets the main panel verify sync
-        # Whether raw-TCP links can reach this deploy at all. Railway's
-        # healthcheck ignores unknown fields; operators read it in the log.
-        "raw_tcp": getattr(app.state, "raw_entry", None) is not None,
     }
 
 
@@ -2255,16 +1838,6 @@ def _cors_headers() -> dict:
 
 
 # ------------------------------------------------------------------ entrypoint
-def _listener_up(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bool:
-    """Is something already answering on this local port? Cheap, and it is the
-    difference between "nginx fronts us" and "nothing serves the public port"."""
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
 if __name__ == "__main__":
     import uvicorn
 
@@ -2272,8 +1845,8 @@ if __name__ == "__main__":
     # proxy in another netns, a VPS client hitting the panel port directly). The
     # *port* stays PANEL_PORT: entrypoint.sh puts nginx on $PORT and forwards it
     # here, or - with no nginx in the image - exports PANEL_PORT=$PORT itself.
-    log.info("routing: panel=0.0.0.0:%s (platform PORT=%s, raw entry=%s)",
-             config.PANEL_PORT, config.PUBLIC_PORT, config.RAW_ENTRY_PORT)
+    log.info("routing: panel=0.0.0.0:%s (platform PORT=%s)",
+             config.PANEL_PORT, config.PUBLIC_PORT)
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
