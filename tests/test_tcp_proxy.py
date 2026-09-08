@@ -533,6 +533,13 @@ def test_report_names_the_dead_http_target(admin, monkeypatch):
     assert d["round_trip"]["checked"] is True and d["round_trip"]["round_trip_ok"] is False
 
 
+def test_no_reality_users_means_no_dead_handshake_warning(admin, db):
+    """The soft note must not read like the hard one: "no reality users" is a to-do,
+    "users hold links with no keypair" is an outage."""
+    d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
+    assert not any("already hold Reality links" in w for w in d["warnings"]), d["warnings"]
+
+
 def test_reality_report_matches_what_xray_actually_serves(admin, db):
     """The inbound exists iff a keypair exists and someone uses Reality. The stored
     `reality_enabled` flag is not read by the config generator, so reporting it as
@@ -578,8 +585,9 @@ def test_reality_users_without_a_keypair_are_reported_as_dead(admin, db):
     try:
         d = admin.get("/api/network/status", headers={"Origin": "http://testserver"}).json()
         assert d["reality"]["enabled"] is False and d["reality"]["keypair"] is False
-        hits = [w for w in d["warnings"] if "no keypair" in w]
+        hits = [w for w in d["warnings"] if "already hold Reality links" in w]
         assert hits and hits[0].startswith("1 user"), d["warnings"]
+        assert not any("not in use yet" in w for w in d["warnings"]), d["warnings"]
     finally:
         admin.delete(f"/api/users/{uid}", headers={"Origin": "http://testserver"})
         for k, v in saved.items():

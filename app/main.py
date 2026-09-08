@@ -466,12 +466,13 @@ async def _network_report(settings: dict) -> dict:
     if reality_users and not reality_ready:
         warnings.append(
             f"{reality_users} user(s) already hold Reality links but this server has no "
-            "keypair, so nothing answers that handshake. Pin a key (or let the panel "
+            "keypair to answer them, so that handshake dies. Pin a key (or let the panel "
             "generate one when Xray is installed), then rebuild those links.")
     elif not reality_ready:
         warnings.append(
-            "Reality has no keypair yet, so raw links fall back to TLS/plain. "
-            "Reality is what makes a config survive operator DPI.")
+            "Reality is not in use yet: no keypair exists, so any Reality link a user "
+            "picks would fall back to TLS/plain. Reality is what makes a config survive "
+            "operator DPI.")
     has_volume = bool(os.environ.get("RAILWAY_VOLUME_NAME") or os.environ.get("TITAN_DATA_DIR_ON_VOLUME"))
     if config.IS_RAILWAY and not has_volume and reality.key_source() != "pinned":
         warnings.append(
